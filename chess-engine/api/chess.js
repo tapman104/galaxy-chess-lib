@@ -1,28 +1,32 @@
-import { Board, Pieces } from '../core/board.js';
+import { Board, Pieces, getType } from '../core/board.js';
 import { GameState } from '../state/gameState.js';
 import { getLegalMoves, inCheck } from '../core/legality.js';
 import { makeMove, unmakeMove } from '../core/makeMove.js';
+import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from '../core/moveGen.js';
 import { computeHash } from '../core/zobrist.js';
 import { parseFEN, exportFEN } from '../io/fen.js';
 import { moveToSAN, sanToMove } from './san.js';
 import { parsePGN, exportPGN } from './pgn.js';
 import { InvalidMoveError, InvalidFENError } from './errors.js';
 
+import { STANDARD, FOUR_PLAYER } from '../core/variants.js';
+
 export class Chess {
-  constructor(fen) {
-    this._board = new Board();
-    this._state = new GameState();
+  constructor(options = {}) {
+    const variant = options.variant === '4player' ? FOUR_PLAYER : STANDARD;
+    this._board = new Board(variant);
+    this._state = new GameState(variant);
     this._history = []; // {moveInt, undo, san, hash}
     this._positionCounts = new Map(); // hash -> count
     this._headers = {};
 
-    if (fen) this.load(fen);
+    if (options.fen) this.load(options.fen);
     else this.reset();
   }
 
   reset() {
     this._board.setup();
-    this._state = new GameState();
+    this._state = new GameState(this._board.variant);
     this._history = [];
     this._positionCounts.clear();
     this._updateHash();
@@ -66,8 +70,8 @@ export class Chess {
     for (let i = 0; i < legal.count; i++) {
       const m = legal.moves[i];
       if (options.square) {
-        const from = m & 0x3F;
-        if (Board.indexToAlgebraic(from) !== options.square) continue;
+        const from = moveFrom(m);
+        if (this._board.indexToAlgebraic(from) !== options.square) continue;
       }
 
       const san = moveToSAN(this._board, this._state, m);
@@ -125,7 +129,14 @@ export class Chess {
   // STATUS
   // ═══════════════════════════════════════════════════════════════════
 
-  turn() { return this._state.turn === 'white' ? 'w' : 'b'; }
+  turn() { 
+    const map = ['w', 'b', 'l', 'g']; // white, blue, black, green (Standard Black is index 2 in our 4P order)
+    // Wait, in Standard, white is 0, black is 1.
+    if (this._board.variant.name === 'standard') {
+        return this._state.turn === 0 ? 'w' : 'b';
+    }
+    return map[this._state.turn]; 
+  }
 
   inCheck() { return inCheck(this._board, this._state); }
 
@@ -143,8 +154,10 @@ export class Chess {
   }
 
   insufficientMaterial() {
-    const w = Array.from(this._board.getPieces('white'));
-    const b = Array.from(this._board.getPieces('black'));
+    if (this._board.variant.name !== 'standard') return false; // Default to not draw for 4P simple check
+
+    const w = Array.from(this._board.getPieces(0)); // White
+    const b = Array.from(this._board.getPieces(2)); // Black (Standard 2P black is index 2 in our color order)
     const total = w.length + b.length;
 
     // K vs K
@@ -152,27 +165,27 @@ export class Chess {
 
     // K vs K + B or K vs K + N
     if (total === 3) {
-      const extra = w.concat(b).find(idx => Board.type(this._board.getByIndex(idx)) !== 6);
-      const type = Board.type(this._board.getByIndex(extra));
-      if (type === Pieces.WHITE_KNIGHT || type === Pieces.WHITE_BISHOP) return true;
+      const extra = w.concat(b).find(idx => getType(this._board.getByIndex(idx)) !== Pieces.KING);
+      const piece = this._board.getByIndex(extra);
+      const type = getType(piece);
+      if (type === Pieces.KNIGHT || type === Pieces.BISHOP) return true;
     }
 
     // K + B vs K + B (same color)
     if (total === 4) {
       if (w.length === 2 && b.length === 2) {
-        const wb = w.find(idx => Board.type(this._board.getByIndex(idx)) === Pieces.WHITE_BISHOP);
-        const bb = b.find(idx => Board.type(this._board.getByIndex(idx)) === Pieces.WHITE_BISHOP);
+        const wb = w.find(idx => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
+        const bb = b.find(idx => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
         if (wb && bb) {
-          const color1 = (wb & 7 + (wb >> 3)) % 2; // Actually (file + rank) % 2
-          const color2 = (Board.file(bb) + Board.rank(bb)) % 2;
-          const color1_real = ( (wb & 7) + (wb >> 3) ) % 2;
-          const color2_real = ( (bb & 7) + (bb >> 3) ) % 2;
+          const color1_real = (this._board.file(wb) + this._board.rank(wb)) % 2;
+          const color2_real = (this._board.file(bb) + this._board.rank(bb)) % 2;
           if (color1_real === color2_real) return true;
         }
       }
     }
     return false;
   }
+
 
   inDraw() {
     return (
@@ -243,72 +256,70 @@ export class Chess {
   }
 
   _resolvePackedMove(input, legal) {
-    const from = Board.algebraicToIndex(input.from);
-    const to = Board.algebraicToIndex(input.to);
+    const from = this._board.algebraicToIndex(input.from);
+    const to = this._board.algebraicToIndex(input.to);
     const promo = input.promotion ? this._charToPromo(input.promotion) : 0;
 
     for (let i = 0; i < legal.count; i++) {
         const m = legal.moves[i];
-        if ((m & 0x3F) === from && ((m >>> 6) & 0x3F) === to) {
-            // Check promotion
-            const mPromo = (m >>> 16) & 0x07;
+        if (moveFrom(m) === from && moveTo(m) === to) {
+            const mPromo = movePromo(m);
             if (promo && mPromo !== promo) continue;
-            // If move requires promo but none given, default to Queen if it's a legal Queen promo
-            if (!promo && (mPromo === Pieces.WHITE_QUEEN)) return m;
-            return m;
+            // Default to queen if no promo provided but move is a promo
+            if (!promo && mPromo === Pieces.QUEEN) return m;
+            // If it's a quiet move (mPromo=0), it matches.
+            if (!promo && mPromo === 0) return m;
         }
     }
     return 0;
   }
 
   _makeMoveObject(moveInt, san) {
-    const from = moveInt & 0x3F;
-    const to = (moveInt >>> 6) & 0x3F;
-    const flag = (moveInt >>> 12) & 0x0F;
-    const promo = (moveInt >>> 16) & 0x07;
+    const from = moveFrom(moveInt);
+    const to = moveTo(moveInt);
+    const flag = moveFlag(moveInt);
+    const promo = movePromo(moveInt);
     const piece = this._board.getByIndex(from);
     
     let captured = undefined;
-    if (flag === 4 || flag === 12) { // CAPTURE or PROMO_CAPTURE
+    if (flag === FLAGS.CAPTURE || flag === FLAGS.PROMO_CAPTURE) {
       const target = this._board.getByIndex(to);
-      captured = this._typeToChar(Board.type(target));
-    } else if (flag === 5) { // EP
+      captured = this._typeToChar(getType(target));
+    } else if (flag === FLAGS.EP_CAPTURE) {
       captured = 'p';
     }
     
     return {
-      from: Board.indexToAlgebraic(from),
-      to: Board.indexToAlgebraic(to),
-      piece: this._typeToChar(Board.type(piece)),
+      from: this._board.indexToAlgebraic(from),
+      to: this._board.indexToAlgebraic(to),
+      piece: this._typeToChar(getType(piece)),
       captured,
       promotion: promo ? this._typeToChar(promo) : undefined,
       flags: this._getFlagChar(flag),
       san: san,
-      color: piece > 0 ? 'w' : 'b'
+      color: this.turn()
     };
   }
 
   _typeToChar(type) {
-    const map = { [Pieces.WHITE_PAWN]: 'p', [Pieces.WHITE_KNIGHT]: 'n', [Pieces.WHITE_BISHOP]: 'b', [Pieces.WHITE_ROOK]: 'r', [Pieces.WHITE_QUEEN]: 'q', [Pieces.WHITE_KING]: 'k' };
+    const map = { [Pieces.PAWN]: 'p', [Pieces.KNIGHT]: 'n', [Pieces.BISHOP]: 'b', [Pieces.ROOK]: 'r', [Pieces.QUEEN]: 'q', [Pieces.KING]: 'k' };
     return map[type] || '';
   }
 
   _charToPromo(char) {
-    const map = { n: Pieces.WHITE_KNIGHT, b: Pieces.WHITE_BISHOP, r: Pieces.WHITE_ROOK, q: Pieces.WHITE_QUEEN };
+    const map = { n: Pieces.KNIGHT, b: Pieces.BISHOP, r: Pieces.ROOK, q: Pieces.QUEEN };
     return map[char.toLowerCase()] || 0;
   }
 
   _getFlagChar(f) {
-    // matches chess.js flag convention: 
-    // n=normal, b=big pawn, k=k-castle, q=q-castle, c=capture, e=ep, p=promo, m=promo-capture
-    if (f === 0) return 'n'; // QUIET
-    if (f === 1) return 'b'; // DOUBLE_PUSH
-    if (f === 2) return 'k'; // CASTLE_K
-    if (f === 3) return 'q'; // CASTLE_Q
-    if (f === 4) return 'c'; // CAPTURE
-    if (f === 5) return 'e'; // EP_CAPTURE
-    if (f === 8) return 'p'; // PROMO
-    if (f === 12) return 'm'; // PROMO_CAPTURE
+    if (f === FLAGS.QUIET) return 'n';
+    if (f === FLAGS.DOUBLE_PUSH) return 'b';
+    if (f === FLAGS.CASTLE_K) return 'k';
+    if (f === FLAGS.CASTLE_Q) return 'q';
+    if (f === FLAGS.CAPTURE) return 'c';
+    if (f === FLAGS.EP_CAPTURE) return 'e';
+    if (f === FLAGS.PROMO) return 'p';
+    if (f === FLAGS.PROMO_CAPTURE) return 'm';
     return 'n';
   }
 }

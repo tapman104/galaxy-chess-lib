@@ -1,80 +1,114 @@
-import { Pieces, Board } from './board.js';
-import { KNIGHT_TARGETS, ROOK_DIRS, BISHOP_DIRS, KING_TARGETS } from './moveGen.js';
+import { Board, Pieces, getType, getColor } from './board.js';
 
 /**
- * Checks if a square is attacked by any piece of the given color.
- * Useful for king safety, castling rules, and move legality.
- *
+ * Checks if a square is attacked by any piece of the given color index.
+ * 
  * @param {Board} board
- * @param {number} sq — Target square index (0-63)
- * @param {'white'|'black'} attackerColor
+ * @param {number} sq — Target square index
+ * @param {number} attackerColor — Color index (0-3)
  * @returns {boolean}
  */
 export function isSquareAttacked(board, sq, attackerColor) {
-  const isWhiteAttacker = attackerColor === 'white';
-  const sqF = sq & 7;
-
+  const width = board.width;
+  
   // 1. KNIGHTS
-  const knight = isWhiteAttacker ? Pieces.WHITE_KNIGHT : Pieces.BLACK_KNIGHT;
-  for (const from of KNIGHT_TARGETS[sq]) {
-    if (board.getByIndex(from) === knight) return true;
-  }
-
-  // 2. KINGS (Kings cannot move into each other's field)
-  const king = isWhiteAttacker ? Pieces.WHITE_KING : Pieces.BLACK_KING;
-  for (const from of KING_TARGETS[sq]) {
-    if (board.getByIndex(from) === king) return true;
-  }
-
-  // 3. PAWNS
-  // A square is attacked by a White pawn if there is a White pawn
-  // at the squares that White pawns attack FROM (relative to 'sq').
-  // White pawns at (sq-7) or (sq-9) attack 'sq'.
-  const pawn = isWhiteAttacker ? Pieces.WHITE_PAWN : Pieces.BLACK_PAWN;
-  const pawnSources = isWhiteAttacker ? [sq - 7, sq - 9] : [sq + 7, sq + 9];
-  for (const fromIdx of pawnSources) {
-    if (fromIdx >= 0 && fromIdx < 64 && Math.abs((fromIdx & 7) - sqF) === 1) {
-      if (board.getByIndex(fromIdx) === pawn) return true;
+  const knightDeltas = [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]];
+  for (const [df, dr] of knightDeltas) {
+    const f = board.file(sq) + df;
+    const r = board.rank(sq) + dr;
+    if (f >= 0 && f < width && r >= 0 && r < width) {
+      const from = board.index(f, r);
+      if (board.isValidSquare(from)) {
+        const p = board.getByIndex(from);
+        if (getType(p) === Pieces.KNIGHT && getColor(p) === attackerColor) return true;
+      }
     }
   }
 
-  // 4. SLIDING PIECES (Rook, Bishop, Queen)
-  const r = isWhiteAttacker ? Pieces.WHITE_ROOK : Pieces.BLACK_ROOK;
-  const b = isWhiteAttacker ? Pieces.WHITE_BISHOP : Pieces.BLACK_BISHOP;
-  const q = isWhiteAttacker ? Pieces.WHITE_QUEEN : Pieces.BLACK_QUEEN;
+  // 2. KINGS
+  const kingDeltas = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  for (const [df, dr] of kingDeltas) {
+    const f = board.file(sq) + df;
+    const r = board.rank(sq) + dr;
+    if (f >= 0 && f < width && r >= 0 && r < width) {
+      const from = board.index(f, r);
+      if (board.isValidSquare(from)) {
+        const p = board.getByIndex(from);
+        if (getType(p) === Pieces.KING && getColor(p) === attackerColor) return true;
+      }
+    }
+  }
 
-  // Rook/Queen rays
-  if (isRayAttacked(board, sq, ROOK_DIRS, r, q)) return true;
-  // Bishop/Queen rays
-  if (isRayAttacked(board, sq, BISHOP_DIRS, b, q)) return true;
+  // 3. PAWNS
+  // A square is attacked by an attacker pawn if a pawn is at a position such that it attacks sq.
+  // Attackers move in 'forward' direction. From 'sq', the pawns must be at 'sq - attackDir'.
+  const forward = board.variant.pawnForward[attackerColor];
+  const attackDirs = [];
+  if (Math.abs(forward) === width) { // vertical
+    attackDirs.push(forward - 1, forward + 1);
+  } else { // horizontal
+    attackDirs.push(forward - width, forward + width);
+  }
+
+  for (const dir of attackDirs) {
+    const from = sq - dir; // Inverted: piece at (sq-dir) attacks sq via (from+dir)
+    if (board.isValidSquare(from) && Board_distance(board, from, sq) === 1) {
+      const p = board.getByIndex(from);
+      if (getType(p) === Pieces.PAWN && getColor(p) === attackerColor) return true;
+    }
+  }
+
+  // 4. SLIDING PIECES
+  const rookDirs   = [1, -1, width, -width];
+  const bishopDirs = [width + 1, width - 1, -width + 1, -width - 1];
+
+  if (isRayAttacked(board, sq, rookDirs, Pieces.ROOK, attackerColor)) return true;
+  if (isRayAttacked(board, sq, bishopDirs, Pieces.BISHOP, attackerColor)) return true;
 
   return false;
 }
 
 /**
- * Helper: Radiate from a square along directions to see if an attacker is hit.
- * @private
+ * Checks if a king of a given color is in check (attacked by ANY enemy).
  */
-function isRayAttacked(board, startSq, dirs, p1, p2) {
+export function isKingInCheck(board, colorIndex) {
+  const kingSq = [...board.getPieces(colorIndex)].find(idx => getType(board.getByIndex(idx)) === Pieces.KING);
+  if (kingSq === undefined) return false; // King might have been removed (eliminated)
+
+  for (let c = 0; c < board.variant.numPlayers; c++) {
+    if (c === colorIndex) continue;
+    // Note: In 4-player, we might want to check if player 'c' is alive. 
+    // However, if they aren't alive, they have no pieces, so isSquareAttacked will be false anyway.
+    if (isSquareAttacked(board, kingSq, c)) return true;
+  }
+  return false;
+}
+
+function isRayAttacked(board, startSq, dirs, type, attackerColor) {
   for (const dir of dirs) {
     let sq = startSq;
     while (true) {
-      const prevF = sq & 7;
+      const prevIdx = sq;
       sq += dir;
-      if (sq < 0 || sq >= 64) break;
+      if (!board.isValidSquare(sq)) break;
+      if (Board_distance(board, prevIdx, sq) !== 1) break;
 
-      // Wrap-around protection
-      const curF = sq & 7;
-      if (Math.abs(dir) === 1 && Math.abs(prevF - curF) !== 1) break;
-      if ((dir === 9 || dir === -7) && curF < prevF) break;
-      if ((dir === 7 || dir === -9) && curF > prevF) break;
-
-      const piece = board.getByIndex(sq);
-      if (piece !== Pieces.EMPTY) {
-        if (piece === p1 || piece === p2) return true;
-        break; // ray blocked by another piece
+      const p = board.getByIndex(sq);
+      if (p !== Pieces.EMPTY) {
+        if (getColor(p) === attackerColor) {
+          const t = getType(p);
+          if (t === type || t === Pieces.QUEEN) return true;
+        }
+        break; // blocked
       }
     }
   }
   return false;
 }
+
+function Board_distance(board, idx1, idx2) {
+  const df = Math.abs(board.file(idx1) - board.file(idx2));
+  const dr = Math.abs(board.rank(idx1) - board.rank(idx2));
+  return Math.max(df, dr);
+}
+

@@ -1,20 +1,20 @@
-import { Board, Pieces } from '../core/board.js';
+import { Board, Pieces, getType } from '../core/board.js';
 import { getLegalMoves, inCheck } from '../core/legality.js';
 import { makeMove, unmakeMove } from '../core/makeMove.js';
-import { FLAGS } from '../core/moveGen.js';
+import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from '../core/moveGen.js';
 import { InvalidMoveError } from './errors.js';
 
 /**
  * Convert a packed move integer to a SAN string.
  */
 export function moveToSAN(board, state, move) {
-  const from = move & 0x3F;
-  const to = (move >>> 6) & 0x3F;
-  const flag = (move >>> 12) & 0x0F;
-  const promoType = (move >>> 16) & 0x07;
+  const from = moveFrom(move);
+  const to = moveTo(move);
+  const flag = moveFlag(move);
+  const promoType = movePromo(move);
 
   const piece = board.getByIndex(from);
-  const pType = Board.type(piece);
+  const pType = getType(piece);
   
   // 1. Castling
   if (flag === FLAGS.CASTLE_K) return applyCheckMateSuffix(board, state, move, 'O-O');
@@ -23,7 +23,7 @@ export function moveToSAN(board, state, move) {
   let san = '';
 
   // 2. Piece Symbol
-  if (pType !== Pieces.WHITE_PAWN) {
+  if (pType !== Pieces.PAWN) {
     san += getPieceChar(pType).toUpperCase();
     san += getDisambiguation(board, state, move);
   }
@@ -31,14 +31,14 @@ export function moveToSAN(board, state, move) {
   // 3. Captures
   const isCapture = flag === FLAGS.CAPTURE || flag === FLAGS.EP_CAPTURE || flag === FLAGS.PROMO_CAPTURE;
   if (isCapture) {
-    if (pType === Pieces.WHITE_PAWN) {
-      san += Board.indexToAlgebraic(from)[0]; // file
+    if (pType === Pieces.PAWN) {
+      san += board.indexToAlgebraic(from)[0]; // file
     }
     san += 'x';
   }
 
   // 4. Destination
-  san += Board.indexToAlgebraic(to);
+  san += board.indexToAlgebraic(to);
 
   // 5. Promotion
   if (flag === FLAGS.PROMO || flag === FLAGS.PROMO_CAPTURE) {
@@ -55,47 +55,56 @@ export function sanToMove(board, state, san) {
   const cleanSan = san.replace(/[+#?!( )]/g, '');
   
   // Handle Castling
-  if (cleanSan === 'O-O' || cleanSan === '0-0') return findMoveInLegal(board, state, (m) => ((m >>> 12) & 0x0F) === FLAGS.CASTLE_K, san);
-  if (cleanSan === 'O-O-O' || cleanSan === '0-0-0') return findMoveInLegal(board, state, (m) => ((m >>> 12) & 0x0F) === FLAGS.CASTLE_Q, san);
+  if (cleanSan === 'O-O' || cleanSan === '0-0') return findMoveInLegal(board, state, (m) => moveFlag(m) === FLAGS.CASTLE_K, san);
+  if (cleanSan === 'O-O-O' || cleanSan === '0-0-0') return findMoveInLegal(board, state, (m) => moveFlag(m) === FLAGS.CASTLE_Q, san);
 
   // Match move from legal moves
   const legal = getLegalMoves(board, state);
   
-  // Regex parsing: (Piece?)(Disambiguation?)(x?)(Destination)(=Promotion?)
-  // Matches: Nf3, exd5, R1e1, Qh4xe1=Q
-  const match = cleanSan.match(/^([KQRBN])?([a-h]|[1-8]|[a-h][1-8])?(x)?([a-h][1-8])(=[QRBN])?$/);
+  // Dynamic Regex parsing based on board size
+  const filesRange = board.width > 8 ? 'a-n' : 'a-h';
+  const ranksRange = board.height > 8 ? '(?:1[0-4]|[1-9])' : '[1-8]';
+  const fileRegex = `[${filesRange}]`;
+  const squareRegex = `${fileRegex}${ranksRange}`;
+
+  const pattern = new RegExp(`^([KQRBN])?(${squareRegex}|${fileRegex}|${ranksRange})?(x)?(${squareRegex})(=[QRBN])?$`);
+  const match = cleanSan.match(pattern);
+  
   if (!match) throw new InvalidMoveError(`Invalid move: ${san}`);
 
   const [_, pChar, disambig, isCap, dest, promo] = match;
-  const targetPType = pChar ? charToType(pChar.toLowerCase()) : Pieces.WHITE_PAWN;
-  const targetToIdx = Board.algebraicToIndex(dest);
+
+  const targetPType = pChar ? charToType(pChar.toLowerCase()) : Pieces.PAWN;
+  const targetToIdx = board.algebraicToIndex(dest);
   const targetPromo = promo ? charToType(promo[1].toLowerCase()) : 0;
 
   for (let i = 0; i < legal.count; i++) {
     const move = legal.moves[i];
-    const from = move & 0x3F;
-    const to = (move >>> 6) & 0x3F;
-    const flag = (move >>> 12) & 0x0F;
-    const promoType = (move >>> 16) & 0x07;
+    const from = moveFrom(move);
+    const to = moveTo(move);
+    const mPType = getType(board.getByIndex(from));
+    const mPromo = movePromo(move);
 
     if (to !== targetToIdx) continue;
-    if (Board.type(board.getByIndex(from)) !== targetPType) continue;
-    if (targetPromo && promoType !== targetPromo) continue;
+    if (mPType !== targetPType) continue;
+    if (targetPromo && mPromo !== targetPromo) continue;
 
     // Disambiguation check
     if (disambig) {
-      const alg = Board.indexToAlgebraic(from);
-      if (disambig.length === 1) {
-        if (alg[0] !== disambig && alg[1] !== disambig) continue;
+      const alg = board.indexToAlgebraic(from);
+      if (alg === disambig) {
+          // exact match
+      } else if (alg.startsWith(disambig) || alg.endsWith(disambig)) {
+          // partial match (file or rank)
       } else {
-        if (alg !== disambig) continue;
+          continue;
       }
     }
 
     return {
-      from: Board.indexToAlgebraic(from),
-      to: Board.indexToAlgebraic(to),
-      promotion: promoType ? getPieceChar(promoType) : undefined
+      from: board.indexToAlgebraic(from),
+      to: board.indexToAlgebraic(to),
+      promotion: mPromo ? getPieceChar(mPromo) : undefined
     };
   }
 
@@ -105,11 +114,11 @@ export function sanToMove(board, state, san) {
 function findMoveInLegal(board, state, predicate, originalSan) {
   const legal = getLegalMoves(board, state);
   for (let i = 0; i < legal.count; i++) {
-    if (predicate(legal.moves[i])) {
-      const m = legal.moves[i];
+    const m = legal.moves[i];
+    if (predicate(m)) {
       return {
-        from: Board.indexToAlgebraic(m & 0x3F),
-        to: Board.indexToAlgebraic((m >>> 6) & 0x3F),
+        from: board.indexToAlgebraic(moveFrom(m)),
+        to: board.indexToAlgebraic(moveTo(m)),
         promotion: undefined
       };
     }
@@ -118,32 +127,32 @@ function findMoveInLegal(board, state, predicate, originalSan) {
 }
 
 function getDisambiguation(board, state, move) {
-  const from = move & 0x3F;
-  const to = (move >>> 6) & 0x3F;
+  const from = moveFrom(move);
+  const to = moveTo(move);
   const piece = board.getByIndex(from);
-  const pType = Board.type(piece);
+  const pType = getType(piece);
 
   const legal = getLegalMoves(board, state);
   const candidates = [];
 
   for (let i = 0; i < legal.count; i++) {
     const m = legal.moves[i];
-    const mFrom = m & 0x3F;
-    const mTo = (m >>> 6) & 0x3F;
+    const mFrom = moveFrom(m);
+    const mTo = moveTo(m);
     if (mFrom === from) continue;
-    if (mTo === to && Board.type(board.getByIndex(mFrom)) === pType) {
+    if (mTo === to && getType(board.getByIndex(mFrom)) === pType) {
       candidates.push(mFrom);
     }
   }
 
   if (candidates.length === 0) return '';
 
-  const fromAlg = Board.indexToAlgebraic(from);
+  const fromAlg = board.indexToAlgebraic(from);
   let useFile = false;
   let useRank = false;
 
-  const sameFile = candidates.some(c => Board.indexToAlgebraic(c)[0] === fromAlg[0]);
-  const sameRank = candidates.some(c => Board.indexToAlgebraic(c)[1] === fromAlg[1]);
+  const sameFile = candidates.some(c => board.indexToAlgebraic(c).startsWith(fromAlg[0]));
+  const sameRank = candidates.some(c => board.indexToAlgebraic(c).endsWith(fromAlg.slice(1)));
 
   if (!sameFile) useFile = true;
   else if (!sameRank) useRank = true;
@@ -152,7 +161,9 @@ function getDisambiguation(board, state, move) {
     useRank = true;
   }
 
-  return (useFile ? fromAlg[0] : '') + (useRank ? fromAlg[1] : '');
+  const f = fromAlg[0];
+  const r = fromAlg.slice(1);
+  return (useFile ? f : '') + (useRank ? r : '');
 }
 
 function applyCheckMateSuffix(board, state, move, san) {
@@ -165,19 +176,20 @@ function applyCheckMateSuffix(board, state, move, san) {
 }
 
 function getPieceChar(type) {
-  if (type === Pieces.WHITE_KNIGHT) return 'n';
-  if (type === Pieces.WHITE_BISHOP) return 'b';
-  if (type === Pieces.WHITE_ROOK) return 'r';
-  if (type === Pieces.WHITE_QUEEN) return 'q';
-  if (type === Pieces.WHITE_KING) return 'k';
+  if (type === Pieces.KNIGHT) return 'n';
+  if (type === Pieces.BISHOP) return 'b';
+  if (type === Pieces.ROOK) return 'r';
+  if (type === Pieces.QUEEN) return 'q';
+  if (type === Pieces.KING) return 'k';
   return '';
 }
 
 function charToType(char) {
-  if (char === 'n') return Pieces.WHITE_KNIGHT;
-  if (char === 'b') return Pieces.WHITE_BISHOP;
-  if (char === 'r') return Pieces.WHITE_ROOK;
-  if (char === 'q') return Pieces.WHITE_QUEEN;
-  if (char === 'k') return Pieces.WHITE_KING;
-  return Pieces.WHITE_PAWN;
+  if (char === 'n') return Pieces.KNIGHT;
+  if (char === 'b') return Pieces.BISHOP;
+  if (char === 'r') return Pieces.ROOK;
+  if (char === 'q') return Pieces.QUEEN;
+  if (char === 'k') return Pieces.KING;
+  return Pieces.PAWN;
 }
+

@@ -1,14 +1,10 @@
-import { Pieces, Board } from './board.js';
-import { MoveList, generateMoves, isCastle } from './moveGen.js';
+import { Board, Pieces, getType, getColor } from './board.js';
+import { MoveList, generateMoves, isCastle, moveTo } from './moveGen.js';
 import { makeMove, unmakeMove } from './makeMove.js';
-import { isSquareAttacked } from './attackMap.js';
+import { isSquareAttacked, isKingInCheck } from './attackMap.js';
 
 /**
  * Filter all pseudo-legal moves for the current side to move.
- *
- * @param {Board} board
- * @param {GameState} state
- * @returns {MoveList}
  */
 export function getLegalMoves(board, state) {
   const pseudoList = new MoveList();
@@ -30,47 +26,48 @@ export function getLegalMoves(board, state) {
  */
 export function isMoveLegal(board, state, move) {
   const color = state.turn;
-  const enemy = color === 'white' ? 'black' : 'white';
 
   // 1. CASTLING SPECIAL CHECK
-  // moveGen already checked if squares are empty. 
-  // Legality must check if from, pass-through, and to squares are attacked.
   if (isCastle(move)) {
-    const kingIdx = color === 'white' ? 4 : 60;
-    // Cannot castle if currently in check
-    if (isSquareAttacked(board, kingIdx, enemy)) return false;
+    const kingIdx = findKing(board, color);
+    if (kingIdx === -1) return false;
+
+    // Cannot castle if currently in check from ANY enemy
+    if (isKingInCheck(board, color)) return false;
 
     // Cannot castle if pass-through square is attacked
-    const to = (move >>> 6) & 0x3F;
-    const kingsideTo = color === 'white' ? 6 : 62;
-    const queensideTo = color === 'white' ? 2 : 58;
-
-    if (to === kingsideTo) { // Kingside
-      if (isSquareAttacked(board, kingIdx + 1, enemy)) return false;
-    } else if (to === queensideTo) { // Queenside
-      if (isSquareAttacked(board, kingIdx - 1, enemy)) return false;
+    const to = moveTo(move);
+    const step = (to > kingIdx) ? 1 : -1;
+    
+    // Check square between King and Target
+    const mid = kingIdx + step;
+    for (let c = 0; c < board.variant.numPlayers; c++) {
+      if (c === color) continue;
+      if (isSquareAttacked(board, mid, c)) return false;
+      // Also check target square (though makeMove check covers this, standard convention includes it)
+      if (isSquareAttacked(board, to, c)) return false;
     }
   }
 
   // 2. MAKE/UNMAKE CHECK
   const undo = makeMove(board, state, move);
-  const kingIdx = findKing(board, color);
   
-  // After makeMove, turn has flipped, so 'color' is no longer state.turn.
-  const inCheck = isSquareAttacked(board, kingIdx, enemy);
+  // After makeMove, state.turn has moved to the next player.
+  // We need to check if the player who JUST moved is in check.
+  const inCheckAfter = isKingInCheck(board, color);
   
   unmakeMove(board, state, move, undo);
 
-  return !inCheck;
+  return !inCheckAfter;
 }
 
 /**
  * Helper: Find the king's square for a given color.
  */
-export function findKing(board, color) {
-  const kingType = Pieces.WHITE_KING; // type is absolute 6
-  for (const idx of board.getPieces(color)) {
-    if (Board.type(board.getByIndex(idx)) === kingType) return idx;
+export function findKing(board, colorIndex) {
+  for (const idx of board.getPieces(colorIndex)) {
+    const p = board.getByIndex(idx);
+    if (getType(p) === Pieces.KING) return idx;
   }
   return -1;
 }
@@ -79,7 +76,6 @@ export function findKing(board, color) {
  * Helper: Check if current side is in check.
  */
 export function inCheck(board, state) {
-  const kingIdx = findKing(board, state.turn);
-  const enemy = state.turn === 'white' ? 'black' : 'white';
-  return isSquareAttacked(board, kingIdx, enemy);
+  return isKingInCheck(board, state.turn);
 }
+

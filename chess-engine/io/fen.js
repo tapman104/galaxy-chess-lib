@@ -1,47 +1,77 @@
-import { Pieces, Board } from '../core/board.js';
+import { Board, Pieces, getType, getColor, getPiece } from '../core/board.js';
 import { GameState } from '../state/gameState.js';
+import { STANDARD, FOUR_PLAYER } from '../core/variants.js';
 
-const PIECE_TO_CHAR = {
-  [Pieces.WHITE_PAWN]:   'P', [Pieces.WHITE_KNIGHT]: 'N', [Pieces.WHITE_BISHOP]: 'B',
-  [Pieces.WHITE_ROOK]:   'R', [Pieces.WHITE_QUEEN]:  'Q', [Pieces.WHITE_KING]:   'K',
-  [Pieces.BLACK_PAWN]:   'p', [Pieces.BLACK_KNIGHT]: 'n', [Pieces.BLACK_BISHOP]: 'b',
-  [Pieces.BLACK_ROOK]:   'r', [Pieces.BLACK_QUEEN]:  'q', [Pieces.BLACK_KING]:   'k',
-};
+function getPieceChar(piece) {
+  const type = getType(piece);
+  const color = getColor(piece);
+  const chars = {
+    [Pieces.PAWN]:   'p', [Pieces.KNIGHT]: 'n', [Pieces.BISHOP]: 'b',
+    [Pieces.ROOK]:   'r', [Pieces.QUEEN]:  'q', [Pieces.KING]:   'k',
+  };
+  const char = chars[type] || '?';
+  // Red/White=0, Blue=1, Yellow/Black=2, Green=3
+  // Standard FEN only supports 2 colors (Upper/Lower). 
+  // For 4-player, we might need a custom scheme if we want to distinguish all 4.
+  // But for now, let's just use Case for Player 0 vs others, or just map carefully.
+  // Actually, many 4P FENs use a, b, c, d or similar. 
+  // Let's stick to: 0:Upper, 1:Lower, 2:?? 
+  // Wait, if we want to be compatible with common 4P tools, let's see.
+  // Most 4P FENs just use the piece char and color index.
+  // For simplicity here: 0=Upper, else=Lower. (Temporary, might need better mapping)
+  return color === 0 ? char.toUpperCase() : char;
+}
 
-const CHAR_TO_PIECE = Object.fromEntries(
-  Object.entries(PIECE_TO_CHAR).map(([k, v]) => [v, parseInt(k)])
-);
+function charToPiece(char, variant) {
+  const lower = char.toLowerCase();
+  const isUpper = char === char.toUpperCase();
+  // Map color based on variant and case
+  let color = isUpper ? 0 : 1; 
+  if (variant === FOUR_PLAYER) {
+      // In 4P FEN, often colors are explicitly marked or we use different chars.
+      // For this implementation, we'll assume a simplified mapping or just 2 colors for now if not specified.
+      // TODO: Proper 4-player piece-to-color mapping.
+  }
+  const types = {
+    p: Pieces.PAWN, n: Pieces.KNIGHT, b: Pieces.BISHOP,
+    r: Pieces.ROOK, q: Pieces.QUEEN, k: Pieces.KING,
+  };
+  return getPiece(color, types[lower]);
+}
 
 /**
  * Generate FEN string from current board and game state.
- *
- * @param {Board} board
- * @param {GameState} state
- * @returns {string}
  */
 export function exportFEN(board, state) {
   const rows = [];
-  for (let r = 7; r >= 0; r--) {
+  for (let r = board.height - 1; r >= 0; r--) {
     let row = '';
     let empty = 0;
-    for (let f = 0; f < 8; f++) {
-      const p = board.getByIndex(f + (r << 3));
+    for (let f = 0; f < board.width; f++) {
+      const idx = board.index(f, r);
+      if (board.validSquares[idx] === 0) {
+        if (empty > 0) { row += empty; empty = 0; }
+        row += 'X';
+        continue;
+      }
+      const p = board.getByIndex(idx);
       if (p === Pieces.EMPTY) {
         empty++;
       } else {
         if (empty > 0) { row += empty; empty = 0; }
-        row += PIECE_TO_CHAR[p];
+        row += getPieceChar(p);
       }
     }
     if (empty > 0) row += empty;
     rows.push(row);
   }
 
+  const turnChars = ['w', 'b', 'l', 'g'];
   const parts = [
     rows.join('/'),
-    state.turn === 'white' ? 'w' : 'b',
-    getCastlingStr(state.castling),
-    state.epSquare === null ? '-' : Board.indexToAlgebraic(state.epSquare),
+    turnChars[state.turn] || 'w',
+    getCastlingStr(state.castling, board.variant),
+    state.epSquare === null ? '-' : board.indexToAlgebraic(state.epSquare),
     state.halfmoveClock,
     state.fullmoveNumber
   ];
@@ -51,59 +81,69 @@ export function exportFEN(board, state) {
 
 /**
  * Parse a FEN string and return Board and GameState objects.
- *
- * @param {string} fen
- * @returns {{ board: Board, state: GameState }}
  */
-export function parseFEN(fen) {
+export function parseFEN(fen, variant = STANDARD) {
   const parts = fen.trim().split(/\s+/);
-  if (parts.length < 4) throw new Error('Invalid FEN: insufficient parts');
+  if (parts.length < 2) throw new Error('Invalid FEN');
 
   const [pos, turn, castling, ep, halfmove = '0', fullmove = '1'] = parts;
 
-  // 1. Board Position
-  const board = new Board();
+  const board = new Board(variant);
   const rows = pos.split('/');
-  if (rows.length !== 8) throw new Error('Invalid FEN pos: must have 8 rows');
-
-  for (let r = 0; r < 8; r++) {
-    const rank = 7 - r;
+  
+  for (let r = 0; r < board.height; r++) {
+    const rank = board.height - 1 - r;
     let file = 0;
-    for (const char of rows[r]) {
-      if (/\d/.test(char)) {
-        file += parseInt(char);
+    const rowStr = rows[r];
+    if (!rowStr) continue;
+
+    for (let i = 0; i < rowStr.length; i++) {
+      const char = rowStr[i];
+      if (char === 'X') {
+        file++;
+      } else if (/\d/.test(char)) {
+        let numStr = char;
+        while (i + 1 < rowStr.length && /\d/.test(rowStr[i + 1])) {
+          numStr += rowStr[++i];
+        }
+        file += parseInt(numStr);
       } else {
-        const piece = CHAR_TO_PIECE[char];
-        if (!piece) throw new Error(`Invalid FEN piece: ${char}`);
-        board.setByIndex(file + (rank << 3), piece);
+        const piece = charToPiece(char, variant);
+        board.setByIndex(board.index(file, rank), piece);
         file++;
       }
     }
   }
 
-  // 2. Game State
-  const state = new GameState();
-  state.turn = turn === 'w' ? 'white' : 'black';
+  const state = new GameState(variant);
+  const turnMap = { w: 0, b: 1, l: 2, g: 3 };
+  state.turn = turnMap[turn] || 0;
+  
+  // Castling
+  if (castling !== '-') {
+    for (const char of castling) {
+      if (char === 'K') state.castling[0].kingside = true;
+      if (char === 'Q') state.castling[0].queenside = true;
+      if (char === 'k') state.castling[1].kingside = true;
+      if (char === 'q') state.castling[1].queenside = true;
+    }
+  }
 
-  state.castling = {
-    K: castling.includes('K'),
-    Q: castling.includes('Q'),
-    k: castling.includes('k'),
-    q: castling.includes('q'),
-  };
-
-  state.epSquare = ep === '-' ? null : Board.algebraicToIndex(ep);
+  state.epSquare = ep === '-' ? null : board.algebraicToIndex(ep);
   state.halfmoveClock = parseInt(halfmove);
   state.fullmoveNumber = parseInt(fullmove);
 
   return { board, state };
 }
 
-function getCastlingStr(c) {
+function getCastlingStr(castling, variant) {
+  if (variant.name !== 'standard') return '-';
   let s = '';
-  if (c.K) s += 'K';
-  if (c.Q) s += 'Q';
-  if (c.k) s += 'k';
-  if (c.q) s += 'q';
+  if (castling[0].kingside) s += 'K';
+  if (castling[0].queenside) s += 'Q';
+  if (castling[1].kingside) s += 'k';
+  if (castling[1].queenside) s += 'q';
   return s === '' ? '-' : s;
 }
+
+

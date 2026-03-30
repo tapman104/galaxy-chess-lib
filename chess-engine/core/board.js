@@ -1,362 +1,244 @@
-/**
- * Piece constants — Frozen to prevent mutation
- * Positive = White, Negative = Black
- */
-export const Pieces = Object.freeze({
-  EMPTY: 0,
-  WHITE_PAWN: 1,
-  WHITE_KNIGHT: 2,
-  WHITE_BISHOP: 3,
-  WHITE_ROOK: 4,
-  WHITE_QUEEN: 5,
-  WHITE_KING: 6,
-  BLACK_PAWN: -1,
-  BLACK_KNIGHT: -2,
-  BLACK_BISHOP: -3,
-  BLACK_ROOK: -4,
-  BLACK_QUEEN: -5,
-  BLACK_KING: -6,
-});
+import { STANDARD, FOUR_PLAYER, TYPES, COLORS, getColor, getType, getPiece } from './variants.js';
 
-const SYMBOLS = Object.freeze({
-  [Pieces.WHITE_PAWN]: '♙', [Pieces.WHITE_KNIGHT]: '♘', [Pieces.WHITE_BISHOP]: '♗',
-  [Pieces.WHITE_ROOK]: '♖', [Pieces.WHITE_QUEEN]: '♕', [Pieces.WHITE_KING]: '♔',
-  [Pieces.BLACK_PAWN]: '♟', [Pieces.BLACK_KNIGHT]: '♞', [Pieces.BLACK_BISHOP]: '♝',
-  [Pieces.BLACK_ROOK]: '♜', [Pieces.BLACK_QUEEN]: '♛', [Pieces.BLACK_KING]: '♚',
-  [Pieces.EMPTY]: '·',
-});
+export { TYPES as Pieces, COLORS, getColor, getType, getPiece };
 
 /**
- * Board — Engine-grade state container
- *
- * Design:
- *   Internal: Always 0-63 indices (Int8Array) — fast for move gen
- *   External: Optional algebraic notation API — convenience for UIs/FEN
- *   Zero tolerance: Invalid inputs throw immediately (fail fast)
- *
- * pieceList: Two Sets (white/black) of occupied indices.
- *   Avoids full-board scans in move gen. Keep in sync via setByIndex/removeByIndex.
+ * Board — Variant-aware state container
  */
 export class Board {
-  constructor() {
-    // 64-square array (a1=0, h8=63)
-    // Int8Array: 8-bit signed, fast clone, cache-friendly
-    this.squares = new Int8Array(64);
+  constructor(variant = STANDARD) {
+    this.variant = variant;
+    this.width = variant.width;
+    this.height = variant.height;
+    
+    // Board storage
+    this.squares = new Int8Array(this.width * this.height);
+    
+    // Mask for valid squares (0 = invalid/corner, 1 = valid)
+    this.validSquares = new Uint8Array(this.width * this.height).fill(1);
+    if (variant.cornerMask) {
+      this._applyCornerMask(variant.cornerMask);
+    }
 
-    // Piece lists — avoid O(64) scans in move gen
-    this.pieceList = {
-      white: new Set(), // indices of all white pieces
-      black: new Set(), // indices of all black pieces
-    };
+    // Piece lists for each player (Set of indices)
+    this.pieceList = Array.from({ length: variant.numPlayers }, () => new Set());
+  }
+
+  /** @private */
+  _applyCornerMask(maskSize) {
+    // Top-left: (0,0) to (2,2) for 3x3
+    // Bottom-left: (0, height-mask) to (mask-1, height-1)
+    // Actually, chess rank 1 is BOTTOM. Rank 14 is TOP.
+    // Index increases: a1 (left-bottom) = 0, a14 (left-top) = (14*13) = 182?
+    // Let's use rank 0-13, file 0-13.
+    // Red (Bottom): Ranks 0,1. 
+    // corners are (0,0) to (mask-1, mask-1), (width-mask, 0) to (width-1, mask-1), etc.
+    for (let r = 0; r < this.height; r++) {
+      for (let f = 0; f < this.width; f++) {
+        const isCorner = 
+          (r < maskSize && f < maskSize) || // Lower Left
+          (r < maskSize && f >= this.width - maskSize) || // Lower Right
+          (r >= this.height - maskSize && f < maskSize) || // Upper Left
+          (r >= this.height - maskSize && f >= this.width - maskSize); // Upper Right
+        if (isCorner) {
+          this.validSquares[r * this.width + f] = 0;
+        }
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // ENGINE LAYER — Use these in hot paths (move gen, search)
-  // All methods assume valid indices (0-63). Performance critical.
+  // ENGINE LAYER
   // ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * Get piece by index (0-63). No validation — fast.
-   * @param {number} idx — Must be 0-63
-   */
   getByIndex(idx) {
     return this.squares[idx];
   }
 
-  /**
-   * Set piece by index. Keeps pieceList in sync.
-   * @param {number} idx — Must be 0-63
-   * @param {number} piece
-   */
   setByIndex(idx, piece) {
-    // Remove from whichever list currently owns this square
     const prev = this.squares[idx];
-    if (prev > 0) this.pieceList.white.delete(idx);
-    else if (prev < 0) this.pieceList.black.delete(idx);
+    if (prev !== TYPES.EMPTY) {
+      this.pieceList[getColor(prev)].delete(idx);
+    }
 
     this.squares[idx] = piece;
-
-    // Add to new owner's list
-    if (piece > 0) this.pieceList.white.add(idx);
-    else if (piece < 0) this.pieceList.black.add(idx);
+    if (piece !== TYPES.EMPTY) {
+      this.pieceList[getColor(piece)].add(idx);
+    }
   }
 
-  /**
-   * Remove piece by index. Keeps pieceList in sync.
-   */
   removeByIndex(idx) {
-    this.setByIndex(idx, Pieces.EMPTY);
+    this.setByIndex(idx, TYPES.EMPTY);
   }
 
-  /**
-   * Fast helper to get the color of the piece at a given index.
-   * @returns {'white'|'black'|null}
-   */
-  getColorAt(idx) {
-    const p = this.squares[idx];
-    return p === 0 ? null : (p > 0 ? 'white' : 'black');
+  isValidSquare(idx) {
+    return idx >= 0 && idx < this.squares.length && this.validSquares[idx] === 1;
   }
 
-  /**
-   * Fast helper to check if a square is occupied.
-   */
+  getPieces(colorIndex) {
+    return this.pieceList[colorIndex];
+  }
+
   hasPiece(idx) {
-    return this.squares[idx] !== Pieces.EMPTY;
+    return this.squares[idx] !== TYPES.EMPTY;
   }
 
-  /**
-   * Fast helper to check if a square contains an enemy piece.
-   */
-  isEnemy(idx, color) {
+  isEnemy(idx, myColorIndex) {
     const p = this.squares[idx];
-    if (p === Pieces.EMPTY) return false;
-    return color === 'white' ? p < 0 : p > 0;
-  }
-
-  /**
-   * Iterate all pieces for a given color.
-   * Prefer this over scanning squares[] in move gen.
-   * @param {'white'|'black'} color
-   * @returns {Set<number>}
-   */
-  getPieces(color) {
-    return this.pieceList[color];
+    if (p === TYPES.EMPTY) return false;
+    return getColor(p) !== myColorIndex;
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // API LAYER — Input validation, algebraic notation, safety
-  // Use for UI, FEN parsing, user input — slower but safe
+  // COORDINATES
   // ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * Get piece at square (algebraic 'e4' or index).
-   * Validates input, throws on invalid.
-   */
-  get(sq) {
-    const idx = this._toIndex(sq);
-    this._assertOnBoard(idx, sq);
-    return this.squares[idx];
-  }
+  file(idx) { return idx % this.width; }
+  rank(idx) { return Math.floor(idx / this.width); }
 
-  /**
-   * Set piece at square (algebraic or index). Keeps pieceList in sync.
-   */
-  set(sq, piece) {
-    const idx = this._toIndex(sq);
-    this._assertOnBoard(idx, sq);
-    this.setByIndex(idx, piece); // route through setByIndex to sync pieceList
-  }
-
-  /**
-   * Remove piece from square.
-   */
-  remove(sq) {
-    this.set(sq, Pieces.EMPTY);
+  index(file, rank) {
+    return rank * this.width + file;
   }
 
   // ═══════════════════════════════════════════════════════════════════
   // VALIDATION & CONVERSION
   // ═══════════════════════════════════════════════════════════════════
 
-  /** @private */
-  _toIndex(sq) {
-    if (typeof sq === 'number') return sq;
-    if (typeof sq === 'string') return Board.algebraicToIndex(sq);
-    throw new Error(`Square must be string (algebraic) or number (index), got ${typeof sq}`);
-  }
-
-  /** @private */
-  _assertOnBoard(idx, originalInput) {
-    if (!Number.isInteger(idx) || idx < 0 || idx >= 64) {
-      throw new Error(`Square out of bounds: ${originalInput} (resolved to ${idx})`);
+  /**
+   * algebraicToIndex('a1')
+   * Standard: 'a1' -> 0, 'h8' -> 63
+   * 4-Player: 'a1' -> 0, 'n14' -> 195
+   */
+  algebraicToIndex(alg) {
+    const file = alg.charCodeAt(0) - 97; // 'a'
+    const rank = parseInt(alg.slice(1)) - 1;
+    const idx = this.index(file, rank);
+    if (!this.isValidSquare(idx)) {
+      throw new Error(`Invalid algebraic square: ${alg}`);
     }
+    return idx;
   }
 
-  /**
-   * Public validation — accepts both forms.
-   */
-  isOnBoard(sq) {
-    if (typeof sq === 'number') return Number.isInteger(sq) && sq >= 0 && sq < 64;
-    if (typeof sq === 'string') return /^[a-h][1-8]$/.test(sq);
-    return false;
+  indexToAlgebraic(idx) {
+    if (!this.isValidSquare(idx)) {
+      throw new Error(`Invalid index for variant: ${idx}`);
+    }
+    const f = this.file(idx);
+    const r = this.rank(idx);
+    return String.fromCharCode(97 + f) + (r + 1);
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  // BOARD STATE OPS
+  // STATE OPS
   // ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * Deep clone — essential for move simulation/search.
-   * pieceLists are reconstructed from squares to stay in sync.
-   */
   clone() {
-    const copy = new Board();
+    const copy = new Board(this.variant);
     copy.squares = new Int8Array(this.squares);
-    // Rebuild pieceLists from the cloned squares
-    for (let i = 0; i < 64; i++) {
-      const p = copy.squares[i];
-      if (p > 0) copy.pieceList.white.add(i);
-      else if (p < 0) copy.pieceList.black.add(i);
+    for (let i = 0; i < this.pieceList.length; i++) {
+      copy.pieceList[i] = new Set(this.pieceList[i]);
     }
     return copy;
   }
 
   clear() {
-    this.squares.fill(Pieces.EMPTY);
-    this.pieceList.white.clear();
-    this.pieceList.black.clear();
+    this.squares.fill(TYPES.EMPTY);
+    for (const set of this.pieceList) set.clear();
   }
 
-  /**
-   * Standard starting position.
-   */
   setup() {
     this.clear();
-
-    // Pawns: White rank 2 (indices 8-15), Black rank 7 (indices 48-55)
-    for (let file = 0; file < 8; file++) {
-      this.squares[file + 8]  = Pieces.WHITE_PAWN;
-      this.squares[file + 48] = Pieces.BLACK_PAWN;
-      this.pieceList.white.add(file + 8);
-      this.pieceList.black.add(file + 48);
-    }
-
-    const whiteBack = [
-      Pieces.WHITE_ROOK, Pieces.WHITE_KNIGHT, Pieces.WHITE_BISHOP, Pieces.WHITE_QUEEN,
-      Pieces.WHITE_KING, Pieces.WHITE_BISHOP, Pieces.WHITE_KNIGHT, Pieces.WHITE_ROOK,
-    ];
-    const blackBack = [
-      Pieces.BLACK_ROOK, Pieces.BLACK_KNIGHT, Pieces.BLACK_BISHOP, Pieces.BLACK_QUEEN,
-      Pieces.BLACK_KING, Pieces.BLACK_BISHOP, Pieces.BLACK_KNIGHT, Pieces.BLACK_ROOK,
-    ];
-
-    for (let file = 0; file < 8; file++) {
-      this.squares[file]      = whiteBack[file];
-      this.squares[file + 56] = blackBack[file];
-      this.pieceList.white.add(file);
-      this.pieceList.black.add(file + 56);
+    if (this.variant === STANDARD) {
+      this._setupStandard();
+    } else if (this.variant === FOUR_PLAYER) {
+      this._setupFourPlayer();
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════════
-  // STATIC UTILITIES — Geometry & Piece analysis
-  // ═══════════════════════════════════════════════════════════════════
-
-  /** File (0-7) from index. */
-  static file(idx) { return idx & 7; }
-
-  /** Rank (0-7) from index. */
-  static rank(idx) { return idx >> 3; }
-
-  /**
-   * Convert algebraic to index with strict validation.
-   * 'a1' -> 0, 'h8' -> 63
-   * @throws {Error} On invalid format
-   */
-  static algebraicToIndex(alg) {
-    if (typeof alg !== 'string' || alg.length !== 2) {
-      throw new Error(`Invalid algebraic square format: ${alg}`);
+  _setupStandard() {
+    const pieces = [TYPES.ROOK, TYPES.KNIGHT, TYPES.BISHOP, TYPES.QUEEN, TYPES.KING, TYPES.BISHOP, TYPES.KNIGHT, TYPES.ROOK];
+    
+    for (let f = 0; f < 8; f++) {
+      this.setByIndex(this.index(f, 0), (0 << 3) | pieces[f]);
+      this.setByIndex(this.index(f, 1), (0 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(f, 6), (1 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(f, 7), (1 << 3) | pieces[f]);
     }
-    const file = alg.charCodeAt(0) - 97; // 'a' = 97
-    const rank  = alg.charCodeAt(1) - 49; // '1' = 49
-    if (file < 0 || file > 7 || rank < 0 || rank > 7) {
-      throw new Error(`Invalid algebraic square: ${alg}`);
+  }
+
+
+  _setupFourPlayer() {
+    const pieces = [TYPES.ROOK, TYPES.KNIGHT, TYPES.BISHOP, TYPES.QUEEN, TYPES.KING, TYPES.BISHOP, TYPES.KNIGHT, TYPES.ROOK];
+    
+    // RED (Bottom, Color 0): Rows 0, 1. Cols 3-10
+    for (let f = 3; f <= 10; f++) {
+      this.setByIndex(this.index(f, 0), (0 << 3) | pieces[f - 3]);
+      this.setByIndex(this.index(f, 1), (0 << 3) | TYPES.PAWN);
     }
-    return file + (rank << 3);
-  }
-
-  /**
-   * Convert index to algebraic.
-   * 0 -> 'a1', 63 -> 'h8'
-   */
-  static indexToAlgebraic(idx) {
-    if (!Number.isInteger(idx) || idx < 0 || idx >= 64) {
-      throw new Error(`Invalid index for algebraic conversion: ${idx}`);
+    // BLUE (Left, Color 1): Cols 0, 1. Rows 3-10 (moving Right)
+    for (let r = 3; r <= 10; r++) {
+      this.setByIndex(this.index(0, r), (1 << 3) | pieces[r - 3]);
+      this.setByIndex(this.index(1, r), (1 << 3) | TYPES.PAWN);
     }
-    return String.fromCharCode(97 + (idx & 7)) + ((idx >> 3) + 1);
-  }
-
-  /**
-   * Get color of piece.
-   * @returns {'white'|'black'|null} null if empty
-   */
-  static color(piece) {
-    if (piece === Pieces.EMPTY) return null;
-    return piece > 0 ? 'white' : 'black';
-  }
-
-  /**
-   * Get piece type (absolute value).
-   * @returns {number} 1-6 (PAWN-KING), 0 if empty
-   */
-  static type(piece) {
-    return piece === 0 ? 0 : Math.abs(piece);
-  }
-
-  /**
-   * Check if piece belongs to side.
-   */
-  static isColor(piece, color) {
-    if (piece === Pieces.EMPTY) return false;
-    if (color === 'white') return piece > 0;
-    if (color === 'black') return piece < 0;
-    return false;
-  }
-
-  /**
-   * Chebyshev distance between two indices.
-   * = max(|Δfile|, |Δrank|)
-   * Use this for king range checks, attack map radius, etc.
-   */
-  static distance(idx1, idx2) {
-    if (!Number.isInteger(idx1) || !Number.isInteger(idx2)) {
-      throw new Error('distance() requires integer indices');
+    // YELLOW (Top, Color 2): Rows 13, 12. Cols 3-10 (moving Down)
+    for (let f = 3; f <= 10; f++) {
+      this.setByIndex(this.index(f, 13), (2 << 3) | pieces[f - 3]);
+      this.setByIndex(this.index(f, 12), (2 << 3) | TYPES.PAWN);
     }
-    const df = Math.abs((idx1 & 7)  - (idx2 & 7));
-    const dr = Math.abs((idx1 >> 3) - (idx2 >> 3));
-    return Math.max(df, dr);
+    // GREEN (Right, Color 3): Cols 13, 12. Rows 3-10 (moving Left)
+    for (let r = 3; r <= 10; r++) {
+      this.setByIndex(this.index(13, r), (3 << 3) | pieces[r - 3]);
+      this.setByIndex(this.index(12, r), (3 << 3) | TYPES.PAWN);
+    }
   }
 
-  /**
-   * Manhattan distance between two indices.
-   * = |Δfile| + |Δrank|
-   * Useful for heuristics; NOT for king/attack range (use distance()).
-   */
-  static manhattanDistance(idx1, idx2) {
-    if (!Number.isInteger(idx1) || !Number.isInteger(idx2)) {
-      throw new Error('manhattanDistance() requires integer indices');
-    }
-    return Math.abs((idx1 & 7) - (idx2 & 7)) + Math.abs((idx1 >> 3) - (idx2 >> 3));
-  }
 
   // ═══════════════════════════════════════════════════════════════════
   // DEBUGGING
   // ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * Unicode board visualization.
-   */
   toString() {
+    const SYMBOLS = {
+      [TYPES.PAWN]: 'p', [TYPES.KNIGHT]: 'n', [TYPES.BISHOP]: 'b',
+      [TYPES.ROOK]: 'r', [TYPES.QUEEN]: 'q', [TYPES.KING]: 'k',
+      [TYPES.EMPTY]: '·',
+    };
+    
     const rows = [];
-    for (let rank = 7; rank >= 0; rank--) {
-      let row = `${rank + 1} │`;
-      for (let file = 0; file < 8; file++) {
-        row += ` ${SYMBOLS[this.squares[file + (rank << 3)]]}`;
+    for (let r = this.height - 1; r >= 0; r--) {
+      let row = `${String(r + 1).padStart(2, ' ')} │`;
+      for (let f = 0; f < this.width; f++) {
+        const idx = this.index(f, r);
+        if (this.validSquares[idx] === 0) {
+          row += '  ';
+          continue;
+        }
+        const p = this.squares[idx];
+        const char = p === TYPES.EMPTY ? '·' : SYMBOLS[getType(p)];
+        const colorPrefix = p === TYPES.EMPTY ? '' : getColor(p);
+        // Simplified visual: color as background or prefix? Let's just use CASE.
+        // 0=WHITE, 1=BLACK, 2=BLUE, 3=GREEN
+        const renderChar = p === TYPES.EMPTY ? '·' : (getColor(p) === 0 ? char.toUpperCase() : char);
+        row += ` ${renderChar}`;
       }
       rows.push(row);
     }
+    
+    let footer = '     ';
+    for (let f = 0; f < this.width; f++) {
+      footer += String.fromCharCode(97 + f) + ' ';
+    }
+
     return [
-      '    a b c d e f g h',
-      '  ┌────────────────',
+      footer,
+      '   ' + '──'.repeat(this.width),
       ...rows,
-      '  └────────────────',
+      '   ' + '──'.repeat(this.width),
     ].join('\n');
   }
 
-  /**
-   * FEN generation (placeholder for later).
-   */
-  toFEN() {
-    throw new Error('FEN export not implemented yet');
-  }
+  static type(piece) { return getType(piece); }
+  static color(piece) { return getColor(piece); }
+  static isColor(piece, colorIndex) { return getColor(piece) === colorIndex; }
 }
+

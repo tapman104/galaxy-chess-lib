@@ -1,37 +1,61 @@
+import { STANDARD } from '../core/variants.js';
+
 /**
  * GameState — Tracks non-piece board state
- * turn, castling rights, en passant square, move clocks
+ * turn (player index), castling rights, en passant square, move clocks
  */
 export class GameState {
-  constructor() {
-    this.turn = 'white';
-    // Castling rights: K, Q (White), k, q (Black)
-    this.castling = { K: true, Q: true, k: true, q: true };
+  constructor(variant = STANDARD) {
+    this.variant = variant;
+    this.turn = 0; // Player index (0 to numPlayers-1)
+    
+    // Alive status for each player
+    this.playerStatus = new Array(variant.numPlayers).fill(true);
+
+    // Castling rights: Map of playerIndex -> { kingside: boolean, queenside: boolean }
+    this.castling = Array.from({ length: variant.numPlayers }, () => ({
+      kingside: true,
+      queenside: true,
+    }));
+
     this.epSquare = null;      // square index for EP capture, or null
     this.halfmoveClock = 0;   // for 50-move rule
-    this.fullmoveNumber = 1;  // incremented after black's turn
+    this.fullmoveNumber = 1;  // incremented after a full round of turns
   }
 
   /**
-   * Flip turn between 'white' and 'black'
+   * Rotate turn to the next alive player
    */
   nextTurn() {
-    this.turn = this.turn === 'white' ? 'black' : 'white';
-    if (this.turn === 'white') {
-      this.fullmoveNumber++;
-    }
+    const startTurn = this.turn;
+    do {
+      this.turn = (this.turn + 1) % this.variant.numPlayers;
+      if (this.turn === 0) {
+        this.fullmoveNumber++;
+      }
+    } while (!this.playerStatus[this.turn] && this.turn !== startTurn);
   }
 
   /**
-   * Deep clone for search/simulation
+   * Eliminate a player and mark them as dead
    */
+  eliminatePlayer(playerIndex) {
+    this.playerStatus[playerIndex] = false;
+  }
+
+  isPlayerAlive(playerIndex) {
+    return this.playerStatus[playerIndex];
+  }
+
   clone() {
-    const copy = new GameState();
+    const copy = new GameState(this.variant);
     copy.turn = this.turn;
-    copy.castling = { ...this.castling };
+    copy.playerStatus = [...this.playerStatus];
+    copy.castling = this.castling.map(c => ({ ...c }));
     copy.epSquare = this.epSquare;
     copy.halfmoveClock = this.halfmoveClock;
     copy.fullmoveNumber = this.fullmoveNumber;
     return copy;
   }
 }
+
