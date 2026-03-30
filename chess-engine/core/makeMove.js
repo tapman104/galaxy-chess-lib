@@ -32,6 +32,7 @@ export function makeMove(board, state, move) {
     castling: { ...state.castling },
     epSquare: state.epSquare,
     halfmoveClock: state.halfmoveClock,
+    fullmoveNumber: state.fullmoveNumber,
   };
 
   // ═══════════════════════════════════════════════════════════════════
@@ -94,7 +95,8 @@ export function makeMove(board, state, move) {
   }
 
   // CASTLING RIGHTS: Update if King or Rook move/captured
-  if (type === Pieces.WHITE_KING) {
+  const isKing = type === 6; // Board.type(piece) returns abs value
+  if (isKing) {
     if (isWhite) { state.castling.K = false; state.castling.Q = false; }
     else { state.castling.k = false; state.castling.q = false; }
   }
@@ -129,9 +131,6 @@ export function unmakeMove(board, state, move, undo) {
 
   // 1. REVERT TURN
   const isWhiteMove = state.turn === 'black'; // was white's move if now black
-  if (state.turn === 'white') {
-    state.fullmoveNumber--;
-  }
   state.turn = isWhiteMove ? 'white' : 'black';
 
   // 2. REVERT PIECE MOVE
@@ -177,4 +176,5 @@ export function unmakeMove(board, state, move, undo) {
   state.castling      = undo.castling;
   state.epSquare      = undo.epSquare;
   state.halfmoveClock = undo.halfmoveClock;
+  state.fullmoveNumber = undo.fullmoveNumber;
 }

@@ -41,12 +41,13 @@ export function isMoveLegal(board, state, move) {
     if (isSquareAttacked(board, kingIdx, enemy)) return false;
 
     // Cannot castle if pass-through square is attacked
-    // White: f1(5), g1(6) for K; d1(3), c1(2) for Q. 
-    // Wait, Q side pass-through is only d1(3). b1(1) doesn't need to be safe.
     const to = (move >>> 6) & 0x3F;
-    if (to === 6) { // Kingside
+    const kingsideTo = color === 'white' ? 6 : 62;
+    const queensideTo = color === 'white' ? 2 : 58;
+
+    if (to === kingsideTo) { // Kingside
       if (isSquareAttacked(board, kingIdx + 1, enemy)) return false;
-    } else if (to === 2) { // Queenside
+    } else if (to === queensideTo) { // Queenside
       if (isSquareAttacked(board, kingIdx - 1, enemy)) return false;
     }
   }

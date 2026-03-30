@@ -92,3 +92,31 @@ export function computeHash(board, state) {
 
   return hash;
 }
+
+/**
+ * Incremental Updates — Toggle bits for a specific property
+ */
+
+export function xorPiece(hash, sq, piece) {
+  return hash ^ ZOBRIST_TABLE[sq * 12 + getPieceIndex(piece)];
+}
+
+export function xorTurn(hash) {
+  return hash ^ ZOBRIST_TABLE[PIECE_KEYS];
+}
+
+export function xorCastle(hash, castling) {
+  let idx = 0;
+  if (castling.K) idx |= 1;
+  if (castling.Q) idx |= 2;
+  if (castling.k) idx |= 4;
+  if (castling.q) idx |= 8;
+  return hash ^ ZOBRIST_TABLE[PIECE_KEYS + TURN_KEY + idx];
+}
+
+export function xorEP(hash, epSquare) {
+  if (epSquare === null) return hash;
+  const file = epSquare & 7;
+  return hash ^ ZOBRIST_TABLE[PIECE_KEYS + TURN_KEY + CASTLE_KEYS + file];
+}
+

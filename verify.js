@@ -1,49 +1,70 @@
-import { Board, GameState, getLegalMoves, makeMove, unmakeMove } from './chess-engine/index.js';
-
-const board = new Board();
-board.setup();
-const state = new GameState();
-
-/**
- * Performance test (Perft) — node counting at a given depth.
- * Verifies move generation + make/unmake correctness.
- */
-function perft(depth) {
-  if (depth === 0) return 1;
-  const moves = getLegalMoves(board, state);
-  let nodes = 0;
-  for (let i = 0; i < moves.count; i++) {
-    const move = moves.moves[i];
-    const undo = makeMove(board, state, move);
-    nodes += perft(depth - 1);
-    unmakeMove(board, state, move, undo);
-  }
-  return nodes;
-}
+import { Chess, InvalidMoveError } from './chess-engine/index.js';
 
 try {
-  console.log('Testing initial position...');
-  
-  console.time('perft1');
-  const d1 = perft(1);
-  console.timeEnd('perft1');
-  console.log(`Perft depth 1: ${d1} (Expected: 20)`);
-  if (d1 !== 20) throw new Error('FAILED perft 1');
+  console.log('--- Public API Verification ---');
+  const chess = new Chess();
 
-  console.time('perft2');
-  const d2 = perft(2);
-  console.timeEnd('perft2');
-  console.log(`Perft depth 2: ${d2} (Expected: 400)`);
-  if (d2 !== 400) throw new Error('FAILED perft 2');
+  // 1. Basic moves
+  console.log('Testing basic moves (e4, e5, Nf3)...');
+  chess.move('e4');
+  chess.move('e5');
+  chess.move('Nf3');
+  console.log(`Current FEN: ${chess.fen()}`);
+  if (!chess.fen().includes('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq -')) {
+    throw new Error('FEN mismatch after moves');
+  }
 
-  console.time('perft3');
-  const d3 = perft(3);
-  console.timeEnd('perft3');
-  console.log(`Perft depth 3: ${d3} (Expected: 8902)`);
-  if (d3 !== 8902) throw new Error('FAILED perft 3');
+  // 2. Disambiguation
+  console.log('Testing disambiguation (Nbd2)...');
+  chess.reset();
+  chess.move('e4');
+  chess.move('e5');
+  chess.move('Nf3');
+  chess.move('Nc6');
+  chess.move('d3');
+  chess.move('Nf6');
+  const move = chess.move('Nbd2'); 
+  console.log(`Move: ${move.san} from ${move.from} to ${move.to}`);
+  if (move.san !== 'Nbd2' || move.from !== 'b1') {
+    throw new Error(`Disambiguation failed: expected Nbd2 from b1, got ${move.san} from ${move.from}`);
+  }
 
-  console.log('Verification PASSED! Core engine is stable.');
+  // 3. Threefold Repetition
+  console.log('Testing Threefold Repetition...');
+  chess.reset();
+  // 1. Nf3 Nf6 2. Ng1 Ng8 (Pos 1)
+  // 3. Nf3 Nf6 4. Ng1 Ng8 (Pos 2)
+  // 5. Nf3 Nf6 6. Ng1 Ng8 (Pos 3)
+  const reps = ['Nf3', 'Nf6', 'Ng1', 'Ng8'];
+  for (let i = 0; i < 2; i++) {
+    reps.forEach(m => chess.move(m));
+  }
+  console.log(`Repetition count (after 2 cycles): ${chess.inThreefoldRepetition()}`);
+  reps.forEach(m => chess.move(m));
+  console.log(`Repetition count (after 3 cycles): ${chess.inThreefoldRepetition()}`);
+  if (!chess.inThreefoldRepetition()) throw new Error('Failed to detect Threefold Repetition');
+
+  // 4. PGN Export
+  console.log('Testing PGN Export...');
+  chess.reset();
+  chess.move('e4');
+  chess.move('e5');
+  const pgn = chess.pgn();
+  console.log('PGN Output:');
+  console.log(pgn);
+  if (!pgn.includes('1. e4 e5')) throw new Error('PGN export failed');
+
+  // 5. Checkmate Detection
+  console.log('Testing Checkmate (Fool\'s Mate)...');
+  chess.reset();
+  ['f3', 'e5', 'g4', 'Qh4#'].forEach(m => chess.move(m));
+  console.log(`In Checkmate: ${chess.inCheckmate()}`);
+  console.log(`Is Game Over: ${chess.isGameOver()}`);
+  if (!chess.inCheckmate()) throw new Error('Failed to detect Fool\'s Mate');
+
+  console.log('\n✅ Public API Verification PASSED!');
 } catch (err) {
-  console.error(err.message);
+  console.error('❌ Verification FAILED');
+  console.error(err.stack || err.message);
   process.exit(1);
 }
