@@ -99,6 +99,7 @@ export class Chess {
       this._history = [];
       this._positionCounts.clear();
       this._updateHash();
+      return this;
     } catch (e) {
       throw new InvalidFENError(e.message);
     }
@@ -174,6 +175,8 @@ export class Chess {
       this._meta = { ...data.meta };
       if (data.meta.createdAt) this._createdAt = data.meta.createdAt;
     }
+
+    return this;
   }
 
   toJSON(options = {}) {
@@ -371,13 +374,42 @@ export class Chess {
     return this._board.toString();
   }
 
-  board() {
+  board(options = {}) {
+    const variant = variantId(this._board.variant);
+    if (options.raw === true) {
+      return {
+        width: this._board.width,
+        height: this._board.height,
+        squares: Array.from(this._board.squares),
+        validSquares: Array.from(this._board.validSquares),
+        variant,
+      };
+    }
+
+    const cells = new Array(this._board.squares.length);
+    for (let idx = 0; idx < this._board.squares.length; idx++) {
+      if (this._board.validSquares[idx] === 0) {
+        cells[idx] = null;
+        continue;
+      }
+
+      const piece = this._board.getByIndex(idx);
+      cells[idx] = {
+        square: this._board.indexToAlgebraic(idx),
+        piece: piece === Pieces.EMPTY
+          ? null
+          : {
+              type: this._typeToChar(getType(piece)),
+              color: this._colorToChar(getColor(piece)),
+            },
+      };
+    }
+
     return {
       width: this._board.width,
       height: this._board.height,
-      squares: Array.from(this._board.squares),
-      validSquares: Array.from(this._board.validSquares),
-      variant: variantId(this._board.variant),
+      variant,
+      cells,
     };
   }
 
@@ -409,6 +441,8 @@ export class Chess {
     for (const move of moves) {
       this.move(move);
     }
+
+    return this;
   }
 
   _buildMeta() {

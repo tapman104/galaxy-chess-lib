@@ -5,6 +5,13 @@ It handles move generation, legality, serialization, and game state for standard
 
 This project is not a chess engine/AI.
 
+## Why 4chess
+
+- Supports both 2-player and 4-player chess.
+- Variant-first architecture with versioned variant IDs.
+- Board/rules model can support custom layouts and sizes.
+- Focused on rules/state, not AI/search.
+
 ## Quick Start
 
 ```js
@@ -24,6 +31,29 @@ const game = new Chess({ variant: 'standard@v1' });
 game.move('e4');
 game.move('e5');
 console.log(game.pgn({ format: 'standard' }));
+```
+
+## Minimal Examples
+
+Example 1 — Standard:
+
+```js
+const chess = new Chess();
+chess.move('e4');
+```
+
+Example 2 — 4 Player:
+
+```js
+const chess = new Chess({ variant: '4player' });
+chess.move('e4');
+```
+
+Example 3 — JSON restore:
+
+```js
+const saved = chess.toJSON();
+const restored = new Chess().loadJSON(saved);
 ```
 
 ## Variant IDs
@@ -83,7 +113,8 @@ game.loadJSON(data);
 | --- | --- |
 | `move(input)` | Make one legal move (`SAN` or `{ from, to, promotion? }`). |
 | `moves(opts?)` | List legal moves (SAN or verbose). |
-| `board()` | Get board snapshot (`width`, `height`, `squares`, `validSquares`, `variant`). |
+| `board()` | Safe board snapshot (`width`, `height`, `variant`, `cells`) with mask-respecting `null` invalid cells. |
+| `board({ raw: true })` | Raw internal snapshot (`squares`, `validSquares`) for engine/debug tooling. |
 | `fen()` / `load(fen)` | Export/import FEN. |
 | `pgn(opts?)` / `loadPgn(pgn)` | Export/import PGN-like move text. |
 | `toJSON(opts?)` / `loadJSON(data)` | Export/import full game snapshot. |
@@ -95,4 +126,3 @@ game.loadJSON(data);
 ```js
 import { Chess, variants } from '4chess';
 ```
-

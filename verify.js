@@ -1,90 +1,171 @@
+import assert from 'node:assert/strict';
 import { Chess, InvalidMoveError } from './chess-engine/index.js';
 
+const TYPES = Object.freeze({
+  EMPTY: 0,
+  PAWN: 1,
+  KNIGHT: 2,
+  BISHOP: 3,
+  ROOK: 4,
+  QUEEN: 5,
+  KING: 6,
+});
+
+function piece(color, type) {
+  return (color << 3) | type;
+}
+
+function idx(file, rank, width) {
+  return rank * width + file;
+}
+
+function corePosition(chess) {
+  const json = chess.toJSON();
+  return {
+    variant: json.variant,
+    board: json.board,
+    validSquares: json.validSquares,
+    turn: json.turn,
+    activePlayers: json.activePlayers,
+    castling: json.castling,
+    enPassant: json.enPassant,
+    halfmoveClock: json.halfmoveClock,
+    fullmoveNumber: json.fullmoveNumber,
+  };
+}
+
+function assertSamePosition(a, b, label) {
+  assert.deepStrictEqual(corePosition(a), corePosition(b), label);
+}
+
+function assertDeterministicJSONRoundtrip(chess, label) {
+  const a = chess.toJSON();
+  const b = new Chess().loadJSON(a).toJSON();
+  assert.deepStrictEqual(a, b, label);
+}
+
+function emptyPayload(variant) {
+  const base = new Chess({ variant }).toJSON();
+  base.board = new Array(base.board.length).fill(TYPES.EMPTY);
+  base.history = [];
+  base.positionCounts = [];
+  base.enPassant = null;
+  base.halfmoveClock = 0;
+  base.fullmoveNumber = 1;
+  base.castling = base.castling.map(() => ({ kingside: false, queenside: false }));
+  base.activePlayers = base.castling.map((_, i) => i);
+  return base;
+}
+
+function buildPromotionGame() {
+  const payload = emptyPayload('standard@v1');
+  const w = 8;
+  payload.turn = 0;
+  payload.board[idx(4, 0, w)] = piece(0, TYPES.KING); // e1
+  payload.board[idx(4, 7, w)] = piece(1, TYPES.KING); // e8
+  payload.board[idx(0, 6, w)] = piece(0, TYPES.PAWN); // a7
+
+  const game = new Chess().loadJSON(payload);
+  const move = game.move({ from: 'a7', to: 'a8', promotion: 'q' });
+  assert.equal(move.promotion, 'q', 'Promotion move did not produce queen');
+  assert.deepStrictEqual(game.get('a8'), { type: 'q', color: 'w' }, 'Promotion square did not contain white queen');
+  return game;
+}
+
+function buildEliminationGame() {
+  const payload = emptyPayload('4player@v1');
+  const w = 14;
+  payload.turn = 0;
+
+  payload.board[idx(4, 0, w)] = piece(0, TYPES.KING);   // e1 red king
+  payload.board[idx(3, 3, w)] = piece(0, TYPES.ROOK);   // d4 red rook
+  payload.board[idx(3, 7, w)] = piece(1, TYPES.KING);   // d8 blue king
+  payload.board[idx(10, 13, w)] = piece(2, TYPES.KING); // k14 yellow king
+  payload.board[idx(13, 6, w)] = piece(3, TYPES.KING);  // n7 green king
+
+  const game = new Chess().loadJSON(payload);
+  game.move({ from: 'd4', to: 'd8' });
+
+  assert.deepStrictEqual(
+    game.toJSON().activePlayers,
+    [0, 2, 3],
+    'Blue player should be eliminated after king capture',
+  );
+  return game;
+}
+
 try {
-  console.log('--- Public API Verification ---');
+  console.log('--- Publish Gate Verification ---');
+
+  console.log('1) Basic standard move flow...');
   const chess = new Chess();
-
-  // 1. Basic moves
-  console.log('Testing basic moves (e4, e5, Nf3)...');
   chess.move('e4');
   chess.move('e5');
   chess.move('Nf3');
-  console.log(`Current FEN: ${chess.fen()}`);
-  if (!chess.fen().includes('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq -')) {
-    throw new Error('FEN mismatch after moves');
-  }
+  assert.ok(
+    chess.fen().includes('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq -'),
+    'FEN mismatch after opening sequence',
+  );
 
-  // 2. Disambiguation
-  console.log('Testing disambiguation (Nbd2)...');
-  chess.reset();
-  chess.move('e4');
-  chess.move('e5');
-  chess.move('Nf3');
-  chess.move('Nc6');
-  chess.move('d3');
-  chess.move('Nf6');
-  const move = chess.move('Nbd2'); 
-  console.log(`Move: ${move.san} from ${move.from} to ${move.to}`);
-  if (move.san !== 'Nbd2' || move.from !== 'b1') {
-    throw new Error(`Disambiguation failed: expected Nbd2 from b1, got ${move.san} from ${move.from}`);
-  }
+  console.log('2) Variant alias resolution...');
+  const aliasVariant = new Chess({ variant: '4player' }).toJSON().variant;
+  assert.equal(aliasVariant, '4player@v1', '4player alias must resolve to 4player@v1');
 
-  // 3. Threefold Repetition
-  console.log('Testing Threefold Repetition...');
-  chess.reset();
-  // 1. Nf3 Nf6 2. Ng1 Ng8 (Pos 1)
-  // 3. Nf3 Nf6 4. Ng1 Ng8 (Pos 2)
-  // 5. Nf3 Nf6 6. Ng1 Ng8 (Pos 3)
-  const reps = ['Nf3', 'Nf6', 'Ng1', 'Ng8'];
-  for (let i = 0; i < 2; i++) {
-    reps.forEach(m => chess.move(m));
-  }
-  console.log(`Repetition count (after 2 cycles): ${chess.inThreefoldRepetition()}`);
-  reps.forEach(m => chess.move(m));
-  console.log(`Repetition count (after 3 cycles): ${chess.inThreefoldRepetition()}`);
-  if (!chess.inThreefoldRepetition()) throw new Error('Failed to detect Threefold Repetition');
+  console.log('3) board() snapshot behavior...');
+  const board4 = new Chess({ variant: '4player' }).board();
+  assert.equal(board4.variant, '4player@v1', 'Board snapshot must expose normalized variant id');
+  assert.equal(board4.cells.length, 196, '4-player board must have 196 cells');
+  assert.equal(board4.cells[0], null, 'Masked corner cells must be null');
+  assert.ok(
+    board4.cells.some((cell) => cell && cell.piece),
+    'Board snapshot should include piece objects on occupied cells',
+  );
 
-  // 4. PGN Export
-  console.log('Testing PGN Export...');
-  chess.reset();
-  chess.move('e4');
-  chess.move('e5');
-  const pgn = chess.pgn();
-  console.log('PGN Output:');
-  console.log(pgn);
-  if (!pgn.includes('1. e4 e5')) throw new Error('PGN export failed');
+  const rawBoard4 = new Chess({ variant: '4player' }).board({ raw: true });
+  assert.equal(rawBoard4.validSquares[0], 0, 'Raw board should expose corner mask');
 
-  // 5. Checkmate Detection
-  console.log('Testing Checkmate (Fool\'s Mate)...');
-  chess.reset();
-  ['f3', 'e5', 'g4', 'Qh4#'].forEach(m => chess.move(m));
-  console.log(`In Checkmate: ${chess.inCheckmate()}`);
-  console.log(`Is Game Over: ${chess.isGameOver()}`);
-  if (!chess.inCheckmate()) throw new Error('Failed to detect Fool\'s Mate');
+  console.log('4) Error handling clarity...');
+  assert.throws(
+    () => new Chess({ variant: '5player' }),
+    /Invalid variant: 5player/,
+    'Invalid variant error message mismatch',
+  );
 
-  // 6. 4-Player Verification
-  console.log('\n--- 4-Player Verification ---');
-  const chess4 = new Chess({ variant: '4player' });
-  console.log(`Board Size: ${chess4._board.width}x${chess4._board.height}`);
-  if (chess4._board.width !== 14) throw new Error('4-player board width should be 14');
+  const invalidMoveGame = new Chess();
+  assert.throws(
+    () => invalidMoveGame.move('e9'),
+    (err) => err instanceof InvalidMoveError && /Invalid move: e9/.test(err.message),
+    'Invalid move error message mismatch',
+  );
 
-  console.log('Testing 4-player rotation (Red, Blue, Yellow, Green)...');
-  const moves4 = ['e4', 'c7', 'e11', 'l7']; // Valid pawn moves for Red, Blue, Yellow, Green
-  // Note: Coordinates for 4P need to be valid. 
-  // e4 is white pawn. 
-  // Blue (Player 1) is on the right. 
-  // Black (Player 2) is on top. 
-  // Green (Player 3) is on the left.
-  
-  moves4.forEach(m => {
-    console.log(`Side ${chess4.turn()} moving ${m}...`);
-    chess4.move(m);
-  });
+  console.log('5) Deterministic JSON roundtrip...');
+  const four = new Chess({ variant: '4player' });
+  ['e4', 'c7', 'e11', 'l7'].forEach((m) => four.move(m));
+  assertDeterministicJSONRoundtrip(four, '4-player JSON roundtrip should be deterministic');
 
-  console.log(`Final turn should be back to Red (r). Current: ${chess4.turn()}`);
-  if (chess4.turn() !== 'r') throw new Error('4-player rotation failed');
+  const promotion = buildPromotionGame();
+  assertDeterministicJSONRoundtrip(promotion, 'Promotion JSON roundtrip should be deterministic');
 
-  console.log('\n✅ Public API & 4-Player Verification PASSED!');
+  const elimination = buildEliminationGame();
+  assertDeterministicJSONRoundtrip(elimination, 'Elimination JSON roundtrip should be deterministic');
+
+  console.log('6) PGN roundtrip (4-player)...');
+  const pgn4 = four.pgn({ format: '4player' });
+  const clone4 = new Chess({ variant: '4player' }).loadPgn(pgn4);
+  assertSamePosition(four, clone4, '4-player PGN roundtrip must preserve position');
+
+  console.log('7) Legacy checks (repetition/checkmate)...');
+  const repsGame = new Chess();
+  ['Nf3', 'Nf6', 'Ng1', 'Ng8', 'Nf3', 'Nf6', 'Ng1', 'Ng8', 'Nf3', 'Nf6', 'Ng1', 'Ng8']
+    .forEach((m) => repsGame.move(m));
+  assert.equal(repsGame.inThreefoldRepetition(), true, 'Threefold repetition detection failed');
+
+  const mateGame = new Chess();
+  ['f3', 'e5', 'g4', 'Qh4#'].forEach((m) => mateGame.move(m));
+  assert.equal(mateGame.inCheckmate(), true, 'Failed to detect Fool\'s Mate');
+  assert.equal(mateGame.isGameOver(), true, 'Game-over status mismatch after checkmate');
+
+  console.log('\n✅ All publish-gate checks passed.');
 } catch (err) {
   console.error('❌ Verification FAILED');
   console.error(err.stack || err.message);

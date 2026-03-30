@@ -83,7 +83,7 @@ export function resolveVariant(input = STANDARD) {
     const key = input.trim().toLowerCase();
     const resolved = VARIANT_REGISTRY.get(key);
     if (resolved) return resolved;
-    throw new Error(`Unknown variant: ${input}`);
+    throw new Error(`Invalid variant: ${input}`);
   }
 
   if (typeof input !== 'object') {
