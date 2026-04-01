@@ -92,12 +92,10 @@ export function sanToMove(board, state, san) {
     // Disambiguation check
     if (disambig) {
       const alg = board.indexToAlgebraic(from);
-      if (alg === disambig) {
-          // exact match
-      } else if (alg.startsWith(disambig) || alg.endsWith(disambig)) {
-          // partial match (file or rank)
-      } else {
-          continue;
+      const algFile = alg[0];
+      const algRank = alg.slice(1);
+      if (alg !== disambig && disambig !== algFile && disambig !== algRank) {
+        continue;
       }
     }
 
@@ -148,11 +146,13 @@ function getDisambiguation(board, state, move) {
   if (candidates.length === 0) return '';
 
   const fromAlg = board.indexToAlgebraic(from);
+  const fromFile = board.file(from);
+  const fromRank = board.rank(from);
   let useFile = false;
   let useRank = false;
 
-  const sameFile = candidates.some(c => board.indexToAlgebraic(c).startsWith(fromAlg[0]));
-  const sameRank = candidates.some(c => board.indexToAlgebraic(c).endsWith(fromAlg.slice(1)));
+  const sameFile = candidates.some(c => board.file(c) === fromFile);
+  const sameRank = candidates.some(c => board.rank(c) === fromRank);
 
   if (!sameFile) useFile = true;
   else if (!sameRank) useRank = true;

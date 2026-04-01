@@ -77,15 +77,17 @@ const TARGET_CACHE = new Map(); // width -> { knight, king }
 
 function getTargets(board) {
   const width = board.width;
-  if (TARGET_CACHE.has(width)) return TARGET_CACHE.get(width);
+  const height = board.height;
+  const cacheKey = `${width}x${height}`;
+  if (TARGET_CACHE.has(cacheKey)) return TARGET_CACHE.get(cacheKey);
 
-  const knight = new Array(width * width);
-  const king   = new Array(width * width);
+  const knight = new Array(width * height);
+  const king   = new Array(width * height);
 
   const knightDeltas = [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]];
   const kingDeltas   = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
 
-  for (let idx = 0; idx < width * width; idx++) {
+  for (let idx = 0; idx < width * height; idx++) {
     const f = idx % width;
     const r = Math.floor(idx / width);
     knight[idx] = [];
@@ -106,7 +108,7 @@ function getTargets(board) {
   }
 
   const result = { knight, king };
-  TARGET_CACHE.set(width, result);
+  TARGET_CACHE.set(cacheKey, result);
   return result;
 }
 
