@@ -1,5 +1,6 @@
 import { Board, Pieces, getType, getColor, getPiece } from './board.js';
 import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from './moveGen.js';
+import { FOUR_PLAYER_CASTLE } from './variants.js';
 
 /**
  * Executes a move on the board and updates game state.
@@ -89,24 +90,41 @@ function handleCastlingPhysical(board, color, flag) {
       if (flag === FLAGS.CASTLE_K) { board.removeByIndex(63); board.setByIndex(61, getPiece(1, Pieces.ROOK)); }
       else { board.removeByIndex(56); board.setByIndex(59, getPiece(1, Pieces.ROOK)); }
     }
+  } else if (board.variant.name === '4player') {
+    const cfg = FOUR_PLAYER_CASTLE[color];
+    if (flag === FLAGS.CASTLE_K) {
+      board.removeByIndex(cfg.rK);
+      board.setByIndex(cfg.rKTo, getPiece(color, Pieces.ROOK));
+    } else {
+      board.removeByIndex(cfg.rQ);
+      board.setByIndex(cfg.rQTo, getPiece(color, Pieces.ROOK));
+    }
   }
 }
 
 function updateCastlingRights(state, from, to, variant, color, type) {
-  if (variant.name !== 'standard') return;
-  
-  if (type === Pieces.KING) {
-    state.castling[color].kingside = false;
-    state.castling[color].queenside = false;
-  }
-  
-  // Standard rook squares
-  const rookSquares = { 0: [0, 7], 1: [56, 63] }; // White color 0, Black color 1
-  for (const cIdxStr in rookSquares) {
-    const cIdx = parseInt(cIdxStr);
-    const [qRook, kRook] = rookSquares[cIdx];
-    if (from === qRook || to === qRook) state.castling[cIdx].queenside = false;
-    if (from === kRook || to === kRook) state.castling[cIdx].kingside = false;
+  if (variant.name === 'standard') {
+    if (type === Pieces.KING) {
+      state.castling[color].kingside = false;
+      state.castling[color].queenside = false;
+    }
+    const rookSquares = { 0: [0, 7], 1: [56, 63] };
+    for (const cIdxStr in rookSquares) {
+      const cIdx = parseInt(cIdxStr);
+      const [qRook, kRook] = rookSquares[cIdx];
+      if (from === qRook || to === qRook) state.castling[cIdx].queenside = false;
+      if (from === kRook || to === kRook) state.castling[cIdx].kingside = false;
+    }
+  } else if (variant.name === '4player') {
+    if (type === Pieces.KING) {
+      state.castling[color].kingside = false;
+      state.castling[color].queenside = false;
+    }
+    for (let cIdx = 0; cIdx < FOUR_PLAYER_CASTLE.length; cIdx++) {
+      const cfg = FOUR_PLAYER_CASTLE[cIdx];
+      if (from === cfg.rQ || to === cfg.rQ) state.castling[cIdx].queenside = false;
+      if (from === cfg.rK || to === cfg.rK) state.castling[cIdx].kingside = false;
+    }
   }
 }
 
@@ -173,6 +191,15 @@ function revertCastlingPhysical(board, color, flag) {
     } else { // Black (Color 1)
       if (flag === FLAGS.CASTLE_K) { board.removeByIndex(61); board.setByIndex(63, getPiece(1, Pieces.ROOK)); }
       else { board.removeByIndex(59); board.setByIndex(56, getPiece(1, Pieces.ROOK)); }
+    }
+  } else if (board.variant.name === '4player') {
+    const cfg = FOUR_PLAYER_CASTLE[color];
+    if (flag === FLAGS.CASTLE_K) {
+      board.removeByIndex(cfg.rKTo);
+      board.setByIndex(cfg.rK, getPiece(color, Pieces.ROOK));
+    } else {
+      board.removeByIndex(cfg.rQTo);
+      board.setByIndex(cfg.rQ, getPiece(color, Pieces.ROOK));
     }
   }
 }

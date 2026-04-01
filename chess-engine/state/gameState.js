@@ -13,7 +13,7 @@ export class GameState {
     this.playerStatus = new Array(variant.numPlayers).fill(true);
 
     // Castling rights: Map of playerIndex -> { kingside: boolean, queenside: boolean }
-    const canCastleByDefault = variant.name === 'standard';
+    const canCastleByDefault = variant.name === 'standard' || variant.name === '4player';
     this.castling = Array.from({ length: variant.numPlayers }, () => ({
       kingside: canCastleByDefault,
       queenside: canCastleByDefault,

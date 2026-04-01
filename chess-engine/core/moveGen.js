@@ -9,6 +9,7 @@
  */
 
 import { Board, Pieces, COLORS, getType, getColor } from './board.js';
+import { FOUR_PLAYER_CASTLE } from './variants.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // MOVE ENCODING (Dynamic for larger boards)
@@ -272,6 +273,11 @@ function genKingMoves(board, state, from, color, targetTable, list) {
       if (rights.kingside && !board.hasPiece(61) && !board.hasPiece(62)) list.push(encodeMove(from, 62, FLAGS.CASTLE_K));
       if (rights.queenside && !board.hasPiece(59) && !board.hasPiece(58) && !board.hasPiece(57)) list.push(encodeMove(from, 58, FLAGS.CASTLE_Q));
     }
+  } else if (board.variant.name === '4player') {
+    const rights = state.castling[color];
+    const cfg = FOUR_PLAYER_CASTLE[color];
+    if (rights.kingside  && cfg.emptyK.every(sq => !board.hasPiece(sq))) list.push(encodeMove(from, cfg.kK, FLAGS.CASTLE_K));
+    if (rights.queenside && cfg.emptyQ.every(sq => !board.hasPiece(sq))) list.push(encodeMove(from, cfg.kQ, FLAGS.CASTLE_Q));
   }
 }
 

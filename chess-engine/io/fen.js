@@ -132,6 +132,11 @@ export function parseFEN(fen, variant = STANDARD) {
       if (char === 'k') state.castling[1].kingside = true;
       if (char === 'q') state.castling[1].queenside = true;
     }
+  } else if (resolvedVariant.name === FOUR_PLAYER.name && castling !== '-' && castling.length === 8) {
+    for (let i = 0; i < 4; i++) {
+      state.castling[i].kingside  = castling[i * 2]     === 'K';
+      state.castling[i].queenside = castling[i * 2 + 1] === 'Q';
+    }
   }
 
   state.epSquare = ep === '-' ? null : board.algebraicToIndex(ep);
@@ -142,12 +147,19 @@ export function parseFEN(fen, variant = STANDARD) {
 }
 
 function getCastlingStr(castling, variant) {
-  if (variant.name !== 'standard') return '-';
-  let s = '';
-  if (castling[0].kingside) s += 'K';
-  if (castling[0].queenside) s += 'Q';
-  if (castling[1].kingside) s += 'k';
-  if (castling[1].queenside) s += 'q';
-  return s === '' ? '-' : s;
+  if (variant.name === 'standard') {
+    let s = '';
+    if (castling[0].kingside)  s += 'K';
+    if (castling[0].queenside) s += 'Q';
+    if (castling[1].kingside)  s += 'k';
+    if (castling[1].queenside) s += 'q';
+    return s === '' ? '-' : s;
+  }
+  if (variant.name === '4player') {
+    // 8-char encoding: two chars per player — 'K' or '_' then 'Q' or '_'
+    const s = castling.map(c => `${c.kingside ? 'K' : '_'}${c.queenside ? 'Q' : '_'}`).join('');
+    return s === '________' ? '-' : s;
+  }
+  return '-';
 }
 

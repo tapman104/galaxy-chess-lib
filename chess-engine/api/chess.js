@@ -323,32 +323,69 @@ export class Chess {
   }
 
   insufficientMaterial() {
-    if (this._board.variant.name !== 'standard') return false;
+    if (this._board.variant.name === 'standard') {
+      const w = Array.from(this._board.getPieces(0));
+      const b = Array.from(this._board.getPieces(1));
+      const total = w.length + b.length;
 
-    const w = Array.from(this._board.getPieces(0));
-    const b = Array.from(this._board.getPieces(1));
-    const total = w.length + b.length;
+      if (total === 2) return true;
 
-    if (total === 2) return true;
+      if (total === 3) {
+        const extra = w.concat(b).find((idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING);
+        const piece = this._board.getByIndex(extra);
+        const type = getType(piece);
+        if (type === Pieces.KNIGHT || type === Pieces.BISHOP) return true;
+      }
 
-    if (total === 3) {
-      const extra = w.concat(b).find((idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING);
-      const piece = this._board.getByIndex(extra);
-      const type = getType(piece);
-      if (type === Pieces.KNIGHT || type === Pieces.BISHOP) return true;
-    }
-
-    if (total === 4) {
-      if (w.length === 2 && b.length === 2) {
-        const wb = w.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
-        const bb = b.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
-        if (wb && bb) {
-          const color1 = (this._board.file(wb) + this._board.rank(wb)) % 2;
-          const color2 = (this._board.file(bb) + this._board.rank(bb)) % 2;
-          if (color1 === color2) return true;
+      if (total === 4) {
+        if (w.length === 2 && b.length === 2) {
+          const wb = w.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
+          const bb = b.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
+          if (wb && bb) {
+            const color1 = (this._board.file(wb) + this._board.rank(wb)) % 2;
+            const color2 = (this._board.file(bb) + this._board.rank(bb)) % 2;
+            if (color1 === color2) return true;
+          }
         }
       }
+      return false;
     }
+
+    if (this._board.variant.name === '4player') {
+      const alive = this._state.playerStatus
+        .map((a, i) => (a ? i : -1))
+        .filter((i) => i !== -1);
+      if (alive.length !== 2) return false;
+
+      const [p0, p1] = alive;
+      const pieces0 = Array.from(this._board.getPieces(p0));
+      const pieces1 = Array.from(this._board.getPieces(p1));
+      const total = pieces0.length + pieces1.length;
+
+      if (total === 2) return true;
+
+      if (total === 3) {
+        const extra = [...pieces0, ...pieces1].find(
+          (idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING,
+        );
+        if (extra != null) {
+          const t = getType(this._board.getByIndex(extra));
+          if (t === Pieces.KNIGHT || t === Pieces.BISHOP) return true;
+        }
+      }
+
+      if (total === 4 && pieces0.length === 2 && pieces1.length === 2) {
+        const wb = pieces0.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
+        const bb = pieces1.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
+        if (wb != null && bb != null) {
+          const c1 = (this._board.file(wb) + this._board.rank(wb)) % 2;
+          const c2 = (this._board.file(bb) + this._board.rank(bb)) % 2;
+          if (c1 === c2) return true;
+        }
+      }
+      return false;
+    }
+
     return false;
   }
 

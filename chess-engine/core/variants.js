@@ -55,6 +55,24 @@ export const FOUR_PLAYER = Object.freeze({
   turnLabels: ['R', 'B', 'Y', 'G'],
 });
 
+/**
+ * Castling square config for the 4-player variant (14×14 board).
+ * index(f, r) = r * 14 + f
+ *
+ * For each player: rK/rQ = original rook squares; rKTo/rQTo = rook destinations;
+ * kK/kQ = king destinations; emptyK/emptyQ = squares that must be vacant.
+ */
+export const FOUR_PLAYER_CASTLE = Object.freeze([
+  // Color 0: Red — back rank 0, pieces at files 3–10
+  { rK:  10, rKTo:   8, kK:   9, rQ:   3, rQTo:   6, kQ:   5, emptyK: [8, 9],         emptyQ: [4, 5, 6]         },
+  // Color 1: Blue — back file 0, pieces at ranks 3–10
+  { rK: 140, rKTo: 112, kK: 126, rQ:  42, rQTo:  84, kQ:  70, emptyK: [112, 126],      emptyQ: [56, 70, 84]      },
+  // Color 2: Yellow — back rank 13, pieces at files 3–10
+  { rK: 192, rKTo: 190, kK: 191, rQ: 185, rQTo: 188, kQ: 187, emptyK: [190, 191],      emptyQ: [186, 187, 188]   },
+  // Color 3: Green — back file 13, pieces at ranks 3–10
+  { rK: 153, rKTo: 125, kK: 139, rQ:  55, rQTo:  97, kQ:  83, emptyK: [125, 139],      emptyQ: [69, 83, 97]      },
+]);
+
 const VARIANT_REGISTRY = new Map([
   [STANDARD.id, STANDARD],
   [STANDARD.name, STANDARD],

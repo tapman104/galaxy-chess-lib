@@ -37,7 +37,9 @@ export function isMoveLegal(board, state, move) {
 
     // Cannot castle if pass-through square is attacked
     const to = moveTo(move);
-    const step = (to > kingIdx) ? 1 : -1;
+    const step = board.rank(to) === board.rank(kingIdx)
+      ? (board.file(to) > board.file(kingIdx) ? 1 : -1)
+      : (board.rank(to) > board.rank(kingIdx) ? board.width : -board.width);
     
     // Check square between King and Target
     const mid = kingIdx + step;
