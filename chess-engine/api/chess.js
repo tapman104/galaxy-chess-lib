@@ -1,7 +1,7 @@
 import { Board, Pieces, getType, getColor } from '../core/board.js';
 import { GameState } from '../state/gameState.js';
 import { getLegalMoves, inCheck } from '../core/legality.js';
-import { makeMove, unmakeMove } from '../core/makeMove.js';
+import { makeMove, unmakeMove, poofPieces } from '../core/makeMove.js';
 import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from '../core/moveGen.js';
 import { computeHash } from '../core/zobrist.js';
 import { parseFEN, exportFEN } from '../io/fen.js';
@@ -26,6 +26,7 @@ function cloneUndo(undo) {
     halfmoveClock: undo.halfmoveClock,
     fullmoveNumber: undo.fullmoveNumber,
     eliminatedAtOnce: Array.isArray(undo.eliminatedAtOnce) ? [...undo.eliminatedAtOnce] : null,
+    eliminatedPlayers: Array.isArray(undo.eliminatedPlayers) ? undo.eliminatedPlayers.map((p) => ({ ...p })) : [],
   };
 }
 
@@ -37,6 +38,7 @@ function serializeHistoryEntry(entry) {
     hash: typeof entry.hash === 'bigint' ? entry.hash.toString() : entry.hash,
     move: cloneMoveObject(entry.move),
     undo: cloneUndo(entry.undo),
+    eliminatedPlayers: entry.eliminatedPlayers ? entry.eliminatedPlayers.map((p) => ({ ...p })) : [],
   };
 }
 
@@ -48,6 +50,7 @@ function deserializeHistoryEntry(entry) {
     hash: typeof entry.hash === 'string' ? BigInt(entry.hash) : BigInt(entry.hash || 0),
     move: cloneMoveObject(entry.move),
     undo: cloneUndo(entry.undo),
+    eliminatedPlayers: entry.eliminatedPlayers ? entry.eliminatedPlayers.map((p) => ({ ...p })) : [],
   };
 }
 
@@ -279,9 +282,35 @@ export class Chess {
     const moveObj = this._makeMoveObject(moveInt, san, player);
 
     const undo = makeMove(this._board, this._state, moveInt);
+
+    // Iteratively handle all checkmate eliminations (chain reactions)
+    const eliminatedPlayers = this._handleCheckmateEliminations();
+
+    // Ensure state.turn points to an alive player.
+    // makeMove advanced it once, but _handleCheckmateEliminations might have killed that player.
+    if (!this._state.isPlayerAlive(this._state.turn)) {
+      // Find following alive player without skipping twice if possible
+      // Actually state.nextTurn land on the next alive one correctly.
+      let i = this._state.turn;
+      const start = i;
+      do {
+        i = (i + 1) % this._board.variant.numPlayers;
+        if (i === 0) this._state.fullmoveNumber++;
+      } while (!this._state.isPlayerAlive(i) && i !== start);
+      this._state.turn = i;
+    }
+
     const hash = computeHash(this._board, this._state);
 
-    this._history.push({ moveInt, undo, san, hash, player, move: cloneMoveObject(moveObj) });
+    this._history.push({
+      moveInt,
+      undo,
+      san,
+      hash,
+      player,
+      move: cloneMoveObject(moveObj),
+      eliminatedPlayers,
+    });
     this._incHash(hash);
 
     return moveObj;
@@ -293,6 +322,17 @@ export class Chess {
 
     this._decHash(last.hash);
     unmakeMove(this._board, this._state, last.moveInt, last.undo);
+
+    // Restore pieces for players eliminated via checkmate
+    if (last.eliminatedPlayers) {
+      for (let i = last.eliminatedPlayers.length - 1; i >= 0; i--) {
+        const { pieces } = last.eliminatedPlayers[i];
+        for (const { idx, piece } of pieces) {
+          this._board.setByIndex(idx, piece);
+        }
+      }
+    }
+
     if (last.move) return cloneMoveObject(last.move);
     return this._makeMoveObject(last.moveInt, last.san, last.player);
   }
@@ -305,16 +345,18 @@ export class Chess {
     return map[this._state.turn] || `p${this._state.turn}`;
   }
 
-  inCheck() {
-    return inCheck(this._board, this._state);
+  inCheck(playerIndex = this._state.turn) {
+    return inCheck(this._board, this._state, playerIndex);
   }
 
-  inCheckmate() {
-    return this.inCheck() && getLegalMoves(this._board, this._state).count === 0;
+  inCheckmate(playerIndex = this._state.turn) {
+    if (!this.inCheck(playerIndex)) return false;
+    return getLegalMoves(this._board, this._state, playerIndex).count === 0;
   }
 
-  inStalemate() {
-    return !this.inCheck() && getLegalMoves(this._board, this._state).count === 0;
+  inStalemate(playerIndex = this._state.turn) {
+    if (this.inCheck(playerIndex)) return false;
+    return getLegalMoves(this._board, this._state, playerIndex).count === 0;
   }
 
   inThreefoldRepetition() {
@@ -513,6 +555,32 @@ export class Chess {
     }
 
     return this;
+  }
+
+  _handleCheckmateEliminations() {
+    const eliminated = [];
+    const numPlayers = this._board.variant.numPlayers;
+
+    let found;
+    do {
+      found = false;
+      for (let p = 0; p < numPlayers; p++) {
+        if (!this._state.isPlayerAlive(p)) continue;
+
+        if (this.inCheckmate(p)) {
+          const pieces = poofPieces(this._board, p);
+          this._state.eliminatePlayer(p);
+          eliminated.push({
+            playerIndex: p,
+            pieces: pieces.map(p => ({ idx: p.idx, piece: p.piece }))
+          });
+          found = true;
+          break; // Restart scan immediately
+        }
+      }
+    } while (found);
+
+    return eliminated;
   }
 
   _buildMeta() {

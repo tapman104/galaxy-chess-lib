@@ -128,7 +128,7 @@ function updateCastlingRights(state, from, to, variant, color, type) {
   }
 }
 
-function poofPieces(board, colorIndex) {
+export function poofPieces(board, colorIndex) {
   const pieces = [];
   for (const idx of [...board.getPieces(colorIndex)]) {
     pieces.push({ idx, piece: board.getByIndex(idx) });

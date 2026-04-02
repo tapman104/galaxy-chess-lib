@@ -6,14 +6,14 @@ import { isSquareAttacked, isKingInCheck } from './attackMap.js';
 /**
  * Filter all pseudo-legal moves for the current side to move.
  */
-export function getLegalMoves(board, state) {
+export function getLegalMoves(board, state, playerIndex = state.turn) {
   const pseudoList = new MoveList();
-  generateMoves(board, state, pseudoList);
+  generateMoves(board, state, pseudoList, playerIndex);
 
   const legalList = new MoveList();
   for (let i = 0; i < pseudoList.count; i++) {
     const move = pseudoList.moves[i];
-    if (isMoveLegal(board, state, move)) {
+    if (isMoveLegal(board, state, move, playerIndex)) {
       legalList.push(move);
     }
   }
@@ -24,8 +24,8 @@ export function getLegalMoves(board, state) {
  * Validates if a pseudo-legal move is fully legal (doesn't leave king in check).
  * Also handles specific castling legality (cannot castle through check).
  */
-export function isMoveLegal(board, state, move) {
-  const color = state.turn;
+export function isMoveLegal(board, state, move, playerIndex = state.turn) {
+  const color = playerIndex;
 
   // 1. CASTLING SPECIAL CHECK
   if (isCastle(move)) {
@@ -77,7 +77,7 @@ export function findKing(board, colorIndex) {
 /**
  * Helper: Check if current side is in check.
  */
-export function inCheck(board, state) {
-  return isKingInCheck(board, state.turn);
+export function inCheck(board, state, playerIndex = state.turn) {
+  return isKingInCheck(board, playerIndex);
 }
 

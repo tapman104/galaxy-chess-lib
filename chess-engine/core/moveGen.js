@@ -117,9 +117,9 @@ function getTargets(board) {
 // MAIN GENERATOR
 // ═══════════════════════════════════════════════════════════════════
 
-export function generateMoves(board, state, list) {
+export function generateMoves(board, state, list, playerIndex = state.turn) {
   list.clear();
-  const player = state.turn;
+  const player = playerIndex;
   const targets = getTargets(board);
 
   for (const from of board.getPieces(player)) {
