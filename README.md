@@ -1,6 +1,6 @@
-# 4chess
+# Vortex Chess Library
 
-`4chess` is a chess rules library for JavaScript.
+`vortex-chess` is a chess rules library for JavaScript.
 It handles move generation, legality, serialization, and game state for standard chess and 4-player chess.
 
 This project is not a chess engine/AI.
@@ -8,7 +8,7 @@ This project is not a chess engine/AI.
 Quick example:
 
 ```js
-import { Chess } from '4chess';
+import { Chess } from 'vortex-chess';
 
 const game = new Chess();
 game.move('e4');
@@ -24,7 +24,7 @@ game.move('e4');
 ## Quick Start
 
 ```js
-import { Chess } from '4chess';
+import { Chess } from 'vortex-chess';
 
 const game = new Chess({ variant: '4player@v1' });
 game.move('e4');
@@ -34,7 +34,7 @@ console.log(game.turn()); // b
 Standard chess:
 
 ```js
-import { Chess } from '4chess';
+import { Chess } from 'vortex-chess';
 
 const game = new Chess({ variant: 'standard@v1' });
 game.move('e4');
@@ -381,7 +381,7 @@ copy.move('Nf3'); // original is unchanged
 ### Errors
 
 ```js
-import { InvalidMoveError, InvalidFENError } from '4chess';
+import { InvalidMoveError, InvalidFENError } from 'vortex-chess';
 ```
 
 | Class | Thrown by | When |
@@ -414,7 +414,7 @@ import {
   exportFEN, parseFEN,
   moveToSAN, sanToMove,
   parsePGN, exportPGN,
-} from '4chess';
+} from 'vortex-chess';
 ```
 
 | Export | Description |
