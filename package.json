@@ -17,7 +17,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node verify.js",
+    "test": "node test/verify.js",
+    "bench": "node bench/perft.js",
     "prepublishOnly": "npm test"
   },
   "keywords": [

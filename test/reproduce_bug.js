@@ -1,4 +1,4 @@
-import { Chess } from './chess-engine/api/chess.js';
+import { Chess } from '../chess-engine/api/chess.js';
 
 const mateGame = new Chess();
 console.log('Initial turn:', mateGame.turn());

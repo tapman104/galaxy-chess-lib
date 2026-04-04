@@ -1,5 +1,5 @@
-import { Chess } from './chess-engine/api/chess.js';
-import { Pieces, getPiece } from './chess-engine/core/board.js';
+import { Chess } from '../chess-engine/api/chess.js';
+import { Pieces, getPiece } from '../chess-engine/core/board.js';
 
 async function runTests() {
   console.log('--- Final Elimination Verification ---');

@@ -1,4 +1,4 @@
-import { Chess } from './chess-engine/index.js';
+import { Chess } from '../chess-engine/index.js';
 
 function piece(color, type) {
   return (color << 3) | type;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { Chess, InvalidMoveError } from './chess-engine/index.js';
+import { Chess, InvalidMoveError } from '../chess-engine/index.js';
 
 const TYPES = Object.freeze({
   EMPTY: 0,
