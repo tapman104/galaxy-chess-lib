@@ -92,6 +92,9 @@ export class Chess {
     else this.reset();
   }
 
+  /**
+   * Resets the game to its initial starting position.
+   */
   reset() {
     this._board.setup();
     this._state = new GameState(this._board.variant);
@@ -100,6 +103,13 @@ export class Chess {
     this._updateHash();
   }
 
+  /**
+   * Loads a position from a FEN string.
+   * @param {string} fen The FEN string to load.
+   * @param {Object} [options]
+   * @param {string} [options.variant] Override the variant detection.
+   * @returns {Chess} This instance.
+   */
   load(fen, options = {}) {
     try {
       const variant = options.variant ? resolveVariant(options.variant) : this._board.variant;
@@ -115,6 +125,24 @@ export class Chess {
     }
   }
 
+  /**
+   * Gets or sets PGN headers.
+   * @param {...string} args If one argument, returns that header value. If two, sets that header. If none, returns all headers.
+   * @returns {string|Object|undefined}
+   */
+  header(...args) {
+    if (args.length === 0) return this._headers;
+    if (args.length === 1) return this._headers[args[0]];
+    if (args.length >= 2) {
+      this._headers[args[0]] = args[1];
+    }
+  }
+
+  /**
+   * Loads the game state from a JSON object.
+   * @param {Object} data
+   * @returns {Chess}
+   */
   loadJSON(data) {
     if (!data || typeof data !== 'object') {
       throw new InvalidFENError('Invalid JSON payload');
@@ -220,6 +248,10 @@ export class Chess {
     return payload;
   }
 
+  /**
+   * Returns the FEN string for the current position.
+   * @returns {string}
+   */
   fen() {
     return exportFEN(this._board, this._state);
   }
@@ -240,6 +272,13 @@ export class Chess {
     return next;
   }
 
+  /**
+   * Returns a list of legal moves from the current position.
+   * @param {Object} [options]
+   * @param {string} [options.square] Filter moves by the starting square (e.g., 'e2').
+   * @param {boolean} [options.verbose] Return objects instead of SAN strings.
+   * @returns {string[]|Object[]} An array of SAN strings or move objects.
+   */
   moves(options = {}) {
     const legal = getLegalMoves(this._board, this._state);
     const results = [];
@@ -261,6 +300,12 @@ export class Chess {
     return results;
   }
 
+  /**
+   * Makes a move on the board.
+   * @param {string|Object} moveInput The move (e.g., 'e4' or {from: 'e2', to: 'e4'})
+   * @throws {InvalidMoveError} If the move is illegal or malformed.
+   * @returns {Object} The move object describing the change.
+   */
   move(moveInput) {
     let moveInt = 0;
     const legal = getLegalMoves(this._board, this._state);
@@ -277,7 +322,7 @@ export class Chess {
     const player = this._state.turn;
     const san = moveToSAN(this._board, this._state, moveInt);
     const moveObj = this._makeMoveObject(moveInt, san, player);
-
+    
     const undo = makeMove(this._board, this._state, moveInt);
 
     // After a move in multi-player variants:
@@ -304,6 +349,9 @@ export class Chess {
     }
 
     const hash = computeHash(this._board, this._state);
+    if (eliminatedPlayers.length > 0) {
+      moveObj.eliminatedPlayers = eliminatedPlayers;
+    }
 
     this._history.push({ 
       moveInt, 
@@ -319,9 +367,27 @@ export class Chess {
     return moveObj;
   }
 
+  /**
+   * Undoes the last move, including resignations and elimination chains.
+   * @returns {Object|null} The move object that was undone, or null if no history.
+   */
   undo() {
     const last = this._history.pop();
     if (!last) return null;
+
+    if (last.type === 'resign') {
+      this._decHash(last.hash);
+      // Restore player status
+      this._state.playerStatus[last.player] = true;
+      // Restore poofed pieces
+      if (last.undo && last.undo.eliminatedAtOnce) {
+        for (const { idx, piece } of last.undo.eliminatedAtOnce) {
+          this._board.setByIndex(idx, piece);
+        }
+      }
+      this._state.turn = last.undo.turn; // Restore turn to the player who was resigned
+      return { type: 'resign', player: last.player, color: this._colorToChar(last.player) };
+    }
 
     this._decHash(last.hash);
     unmakeMove(this._board, this._state, last.moveInt, last.undo);
@@ -331,28 +397,46 @@ export class Chess {
 
   /**
    * Voluntarily eliminate a player (resign in 4-player, or forfeit).
-   * For 2-player standard games this is a no-op — use server-level resign logic instead.
-   * Returns true if the player was successfully eliminated, false otherwise.
-   * @param {number} playerIndex
+   * For 2-player standard games this is recorded as a resignation.
+   * Resignations are stored in history and can be undone.
+   * @param {number|string} player The player index or label to resign.
+   * @returns {boolean} True if the player was successfully eliminated.
    */
-  resign(playerIndex) {
-    if (!Number.isInteger(playerIndex) || playerIndex < 0 || playerIndex >= this._board.variant.numPlayers) {
+  resign(player) {
+    const playerIndex = this._resolvePlayer(player);
+    if (playerIndex < 0 || playerIndex >= this._board.variant.numPlayers) {
       return false;
     }
     if (!this._state.playerStatus[playerIndex]) return false; // already eliminated
 
+    const playerBefore = this._state.turn;
+    const poofed = poofPieces(this._board, playerIndex);
     this._state.eliminatePlayer(playerIndex);
-    poofPieces(this._board, playerIndex);
 
     if (this._state.turn === playerIndex) {
       this._state.nextTurn();
     }
 
     const hash = computeHash(this._board, this._state);
+    this._history.push({
+      type: 'resign',
+      player: playerIndex,
+      san: 'resign',
+      hash,
+      undo: {
+        turn: playerBefore,
+        eliminatedAtOnce: poofed,
+      }
+    });
+
     this._incHash(hash);
     return true;
   }
 
+  /**
+   * Returns the current turn as a string ('w', 'b', 'r', etc).
+   * @returns {string}
+   */
   turn() {
     if (this._board.variant.name === 'standard') {
       return this._state.turn === 0 ? 'w' : 'b';
@@ -361,27 +445,68 @@ export class Chess {
     return map[this._state.turn] || `p${this._state.turn}`;
   }
 
+  /**
+   * Returns the current turn index (0, 1, 2, 3).
+   * @returns {number}
+   */
+  turnIndex() {
+    return this._state.turn;
+  }
+
+  /**
+   * Returns true if the specified player is still in the game.
+   * @param {number|string} player
+   * @returns {boolean}
+   */
+  isAlive(player) {
+    const colorIndex = this._resolvePlayer(player);
+    return !!this._state.playerStatus[colorIndex];
+  }
+
+
+  /**
+   * Returns true if the specified player is currently in check.
+   * @param {number|string} [player] Player token or index. Defaults to current side to move.
+   * @returns {boolean}
+   */
   inCheck(player) {
     const colorIndex = this._resolvePlayer(player);
+    if (!this._state.playerStatus[colorIndex]) return false;
     return inCheck(this._board, this._state, colorIndex);
   }
 
+  /**
+   * Returns true if the specified player is in checkmate.
+   * @param {number|string} [player]
+   * @returns {boolean}
+   */
   inCheckmate(player) {
     const colorIndex = this._resolvePlayer(player);
+    if (!this._state.playerStatus[colorIndex]) return false;
     // Use a temp state to check legality for a specific player
     const tempState = this._state.clone();
     tempState.turn = colorIndex;
     return inCheck(this._board, tempState, colorIndex) && getLegalMoves(this._board, tempState).count === 0;
   }
 
+  /**
+   * Returns true if the specified player is in stalemate.
+   * @param {number|string} [player]
+   * @returns {boolean}
+   */
   inStalemate(player) {
     const colorIndex = this._resolvePlayer(player);
+    if (!this._state.playerStatus[colorIndex]) return false;
     // Use a temp state to check legality for a specific player
     const tempState = this._state.clone();
     tempState.turn = colorIndex;
     return !inCheck(this._board, tempState, colorIndex) && getLegalMoves(this._board, tempState).count === 0;
   }
 
+  /**
+   * Returns true if the current position has occurred at least 3 times.
+   * @returns {boolean}
+   */
   inThreefoldRepetition() {
     const currentHash = computeHash(this._board, this._state);
     return (this._positionCounts.get(currentHash) || 0) >= 3;
@@ -476,13 +601,22 @@ export class Chess {
    * Returns the player index (0-based) of the sole surviving player,
    * or null if the game is still ongoing / ended in a draw.
    */
+  /**
+   * Returns the winner's player index, or null if the game is ongoing or a draw.
+   * @returns {number|null}
+   */
   winner() {
-    const alive = this._state.playerStatus
+    const aliveIndices = this._state.playerStatus
       .map((a, i) => (a ? i : -1))
       .filter((i) => i !== -1);
-    return alive.length === 1 ? alive[0] : null;
+    return aliveIndices.length === 1 ? aliveIndices[0] : null;
   }
 
+  /**
+   * Returns the piece at the specified square.
+   * @param {string} square Algebraic square name (e.g., 'e4').
+   * @returns {{type: string, color: string}|null}
+   */
   get(square) {
     let index;
     try {
@@ -491,11 +625,20 @@ export class Chess {
       return null;
     }
     const piece = this._board.getByIndex(index);
-    if (!piece) return null;
-    const typeChar = this._typeToChar(Board.type(piece));
-    return { type: typeChar, color: this._colorToChar(getColor(piece)) };
+    if (piece === Pieces.EMPTY) return null;
+    return { 
+      type: this._typeToChar(getType(piece)), 
+      color: this._colorToChar(getColor(piece)) 
+    };
   }
 
+  /**
+   * Returns the move history of the game.
+   * @param {Object} [options]
+   * @param {boolean} [options.verbose] If true, returns full move objects.
+   * @param {boolean} [options.withPlayers] If true, returns moves with player info.
+   * @returns {string[]|Object[]}
+   */
   history(options = {}) {
     if (options.verbose) {
       return this._history.map((h) => cloneMoveObject(h.move) || this._makeMoveObject(h.moveInt, h.san, h.player));
@@ -506,6 +649,10 @@ export class Chess {
     return this._history.map((h) => h.san);
   }
 
+  /**
+   * Returns an ASCII representation of the board.
+   * @returns {string}
+   */
   ascii() {
     return this._board.toString();
   }
@@ -525,6 +672,12 @@ export class Chess {
     return this;
   }
 
+  /**
+   * Returns a representation of the board state.
+   * @param {Object} [options]
+   * @param {boolean} [options.raw] If true, returns the raw square data.
+   * @returns {Object}
+   */
   board(options = {}) {
     const variant = variantId(this._board.variant);
     if (options.raw === true) {
@@ -564,6 +717,11 @@ export class Chess {
     };
   }
 
+  /**
+   * Returns the PGN representation of the game.
+   * @param {Object} [options]
+   * @returns {string}
+   */
   pgn(options = {}) {
     const historyObjs = this._history.map((h) => ({ san: h.san, player: h.player, move: h.move }));
     const headers = { Variant: variantId(this._board.variant), ...this._headers };
@@ -575,6 +733,12 @@ export class Chess {
     });
   }
 
+  /**
+   * Loads a game from a PGN string.
+   * @param {string} pgn The PGN string.
+   * @param {Object} [options]
+   * @returns {Chess}
+   */
   loadPgn(pgn, options = {}) {
     const { headers, moves } = parsePGN(pgn, options);
 
@@ -754,20 +918,29 @@ export class Chess {
     return 'n';
   }
 
+  /**
+   * Resolves a player identifier (index, name, or character) to an index.
+   * @param {number|string} player
+   * @returns {number} The 0-based player index.
+   * @private
+   */
   _resolvePlayer(player) {
     if (player === undefined || player === null) return this._state.turn;
-    if (typeof player === 'number') return player;
+    if (Number.isInteger(player)) {
+      if (player < 0 || player >= this._board.variant.numPlayers) return this._state.turn;
+      return player;
+    }
     
-    const p = String(player).toLowerCase();
+    const p = String(player).toLowerCase().trim();
     if (this._board.variant.name === 'standard') {
       if (p === 'w' || p === 'white') return 0;
       if (p === 'b' || p === 'black') return 1;
-    } else {
+    } else if (this._board.variant.name === '4player') {
       const map = { r: 0, red: 0, b: 1, blue: 1, y: 2, yellow: 2, g: 3, green: 3 };
       if (map[p] !== undefined) return map[p];
       if (p.startsWith('p')) {
         const idx = parseInt(p.substring(1));
-        if (!isNaN(idx)) return idx;
+        if (Number.isInteger(idx) && idx >= 0 && idx < 4) return idx;
       }
     }
     return this._state.turn;

@@ -93,7 +93,7 @@ async function testStalemate() {
 
   const lastHistory = game._history[game._history.length - 1];
   console.log('Last history eliminatedPlayers:', JSON.stringify(lastHistory.eliminatedPlayers, null, 2));
-  if (!game._state.isPlayerAlive(1) && game.inStalemate(1) && game._state.turn === 2 && lastHistory.eliminatedPlayers?.includes(1)) {
+  if (!game._state.isPlayerAlive(1) && game.turn() === 'y' && lastHistory.eliminatedPlayers?.includes(1)) {
     console.log('✅ Stalemate Elimination Passed');
   } else {
     console.error('❌ Stalemate Elimination Failed');
