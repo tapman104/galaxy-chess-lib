@@ -1,38 +1,32 @@
 import { Board, Pieces, getType, getColor, getPiece } from '../core/board.js';
 import { GameState } from '../state/gameState.js';
 import { STANDARD, FOUR_PLAYER, resolveVariant } from '../core/variants.js';
+import { VariantConfig } from '../types.js';
 
-function getPieceChar(piece) {
+function getPieceChar(piece: number): string {
   const type = getType(piece);
   const color = getColor(piece);
-  const chars = {
+  const chars: Record<number, string> = {
     [Pieces.PAWN]:   'p', [Pieces.KNIGHT]: 'n', [Pieces.BISHOP]: 'b',
     [Pieces.ROOK]:   'r', [Pieces.QUEEN]:  'q', [Pieces.KING]:   'k',
   };
   const char = chars[type] || '?';
   // Red/White=0, Blue=1, Yellow/Black=2, Green=3
   // Standard FEN only supports 2 colors (Upper/Lower). 
-  // For 4-player, we might need a custom scheme if we want to distinguish all 4.
-  // But for now, let's just use Case for Player 0 vs others, or just map carefully.
-  // Actually, many 4P FENs use a, b, c, d or similar. 
-  // Let's stick to: 0:Upper, 1:Lower, 2:?? 
-  // Wait, if we want to be compatible with common 4P tools, let's see.
-  // Most 4P FENs just use the piece char and color index.
   // For simplicity here: 0=Upper, else=Lower. (Temporary, might need better mapping)
   return color === 0 ? char.toUpperCase() : char;
 }
 
-function charToPiece(char, variant) {
+function charToPiece(char: string, variant: VariantConfig): number {
   const lower = char.toLowerCase();
   const isUpper = char === char.toUpperCase();
   // Map color based on variant and case
   let color = isUpper ? 0 : 1; 
   if (variant.name === FOUR_PLAYER.name) {
       // In 4P FEN, often colors are explicitly marked or we use different chars.
-      // For this implementation, we'll assume a simplified mapping or just 2 colors for now if not specified.
-      // TODO: Proper 4-player piece-to-color mapping.
+      // For this implementation, we'll assume a simplified mapping or just 2 colors for now.
   }
-  const types = {
+  const types: Record<string, number> = {
     p: Pieces.PAWN, n: Pieces.KNIGHT, b: Pieces.BISHOP,
     r: Pieces.ROOK, q: Pieces.QUEEN, k: Pieces.KING,
   };
@@ -42,8 +36,8 @@ function charToPiece(char, variant) {
 /**
  * Generate FEN string from current board and game state.
  */
-export function exportFEN(board, state) {
-  const rows = [];
+export function exportFEN(board: Board, state: GameState): string {
+  const rows: string[] = [];
   for (let r = board.height - 1; r >= 0; r--) {
     let row = '';
     let empty = 0;
@@ -82,7 +76,7 @@ export function exportFEN(board, state) {
 /**
  * Parse a FEN string and return Board and GameState objects.
  */
-export function parseFEN(fen, variant = STANDARD) {
+export function parseFEN(fen: string, variant: VariantConfig | null = STANDARD): { board: Board, state: GameState } {
   const resolvedVariant = resolveVariant(variant || STANDARD);
   const parts = fen.trim().split(/\s+/);
   if (parts.length < 2) throw new Error('Invalid FEN');
@@ -117,7 +111,7 @@ export function parseFEN(fen, variant = STANDARD) {
   }
 
   const state = new GameState(resolvedVariant);
-  const turnMap = { w: 0, b: 1, y: 2, g: 3 };
+  const turnMap: Record<string, number> = { w: 0, b: 1, y: 2, g: 3 };
   state.turn = turnMap[turn] || 0;
   state.castling = Array.from({ length: resolvedVariant.numPlayers }, () => ({
     kingside: false,
@@ -146,7 +140,7 @@ export function parseFEN(fen, variant = STANDARD) {
   return { board, state };
 }
 
-function getCastlingStr(castling, variant) {
+function getCastlingStr(castling: { kingside: boolean, queenside: boolean }[], variant: VariantConfig): string {
   if (variant.name === 'standard') {
     let s = '';
     if (castling[0].kingside)  s += 'K';
@@ -162,4 +156,3 @@ function getCastlingStr(castling, variant) {
   }
   return '-';
 }
-

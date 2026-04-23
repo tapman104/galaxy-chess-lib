@@ -1,11 +1,20 @@
 import { STANDARD } from '../core/variants.js';
+import { VariantConfig, CastlingRights, Square } from '../types.js';
 
 /**
  * GameState — Tracks non-piece board state
  * turn (player index), castling rights, en passant square, move clocks
  */
 export class GameState {
-  constructor(variant = STANDARD) {
+  public variant: VariantConfig;
+  public turn: number;
+  public playerStatus: boolean[];
+  public castling: CastlingRights[];
+  public epSquare: Square | null;
+  public halfmoveClock: number;
+  public fullmoveNumber: number;
+
+  constructor(variant: VariantConfig = STANDARD) {
     this.variant = variant;
     this.turn = 0; // Player index (0 to numPlayers-1)
     
@@ -27,7 +36,7 @@ export class GameState {
   /**
    * Rotate turn to the next alive player
    */
-  nextTurn() {
+  public nextTurn(): void {
     const startTurn = this.turn;
     do {
       this.turn = (this.turn + 1) % this.variant.numPlayers;
@@ -40,15 +49,15 @@ export class GameState {
   /**
    * Eliminate a player and mark them as dead
    */
-  eliminatePlayer(playerIndex) {
+  public eliminatePlayer(playerIndex: number): void {
     this.playerStatus[playerIndex] = false;
   }
 
-  isPlayerAlive(playerIndex) {
+  public isPlayerAlive(playerIndex: number): boolean {
     return this.playerStatus[playerIndex];
   }
 
-  clone() {
+  public clone(): GameState {
     const copy = new GameState(this.variant);
     copy.turn = this.turn;
     copy.playerStatus = [...this.playerStatus];

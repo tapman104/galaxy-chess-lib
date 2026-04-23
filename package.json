@@ -17,10 +17,17 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node test/verify.js",
-    "bench": "node bench/perft.js",
+    "test": "tsx test/verify.js",
+    "bench": "tsx bench/perft.js",
     "dev": "npx http-server ui -p 8000",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm test",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "tsx": "^4.0.0"
   },
   "keywords": [
     "chess",

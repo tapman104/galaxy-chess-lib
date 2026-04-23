@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vortex Chess — Variant Engine</title>
+    <meta name="description" content="Play 2-player and 4-player chess variants with the Vortex engine." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="app">
+
+      <!-- Top Nav -->
+      <header class="topnav">
+        <div class="topnav-logo">
+          <span class="logo-icon">♟</span>
+          <span class="logo-text">VORTEX</span>
+        </div>
+        <nav class="topnav-links">
+          <button class="nav-btn active" id="nav-play">Play</button>
+          <button class="nav-btn" id="nav-settings">Settings</button>
+        </nav>
+      </header>
+
+      <!-- Main Area -->
+      <main class="main-area">
+
+        <!-- Board Column -->
+        <section class="board-col">
+
+          <!-- Top player -->
+          <div class="player-strip top" id="player-black">
+            <span class="player-color-dot dot-black"></span>
+            <span class="player-name" id="player-black-name">Black</span>
+            <span class="player-captured" id="captured-black"></span>
+            <span class="player-status" id="status-black"></span>
+          </div>
+
+          <!-- Board wrapper with coordinates -->
+          <div class="board-wrap">
+            <div class="coord-ranks" id="coord-ranks"></div>
+            <div id="board-container" class="board standard-view"></div>
+            <div class="coord-files" id="coord-files"></div>
+
+            <!-- Promotion overlay (in-board) -->
+            <div id="promotion-overlay" class="promo-overlay hidden">
+              <div class="promo-box">
+                <div class="promo-title">Promote pawn</div>
+                <div class="promo-choices" id="promo-choices"></div>
+              </div>
+            </div>
+
+            <!-- Game Over modal (in-board) -->
+            <div id="game-over-modal" class="game-over-overlay hidden">
+              <div class="game-over-box">
+                <div class="game-over-icon" id="game-over-icon">♛</div>
+                <div class="game-over-title" id="game-over-title">Checkmate!</div>
+                <div class="game-over-sub" id="game-over-sub">White wins</div>
+                <div class="game-over-actions">
+                  <button class="game-over-btn primary" id="btn-play-again">Play Again</button>
+                  <button class="game-over-btn secondary" id="btn-copy-result">Copy Moves</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom player -->
+          <div class="player-strip bottom" id="player-white">
+            <span class="player-color-dot dot-white"></span>
+            <span class="player-name" id="player-white-name">White</span>
+            <span class="player-captured" id="captured-white"></span>
+            <span class="player-status" id="status-white"></span>
+          </div>
+
+        </section>
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+
+          <!-- Tabs -->
+          <div class="sidebar-tabs">
+            <button class="stab active" data-tab="moves">Moves</button>
+            <button class="stab" data-tab="info">Info</button>
+          </div>
+
+          <!-- Move History Tab -->
+          <div class="tab-pane active" id="tab-moves">
+            <div class="tab-header">
+              <span class="tab-title">History</span>
+              <button class="copy-btn" id="btn-copy" title="Copy moves to clipboard">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
+            <div id="move-list" class="move-list">
+              <div class="move-empty">No moves yet</div>
+            </div>
+          </div>
+
+          <!-- Info Tab -->
+          <div class="tab-pane hidden" id="tab-info">
+            <div class="info-section">
+              <div class="info-row">
+                <span class="info-label">Variant</span>
+                <select id="variant-select" class="info-select">
+                  <option value="standard">Standard (2P)</option>
+                  <option value="4player">4-Player</option>
+                </select>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Status</span>
+                <span id="game-status-info" class="info-value">Ready</span>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Turn</span>
+                <span id="turn-info" class="info-value">White</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div class="sidebar-controls">
+            <button class="ctrl-btn" id="btn-first" title="First move">⇤</button>
+            <button class="ctrl-btn" id="btn-prev" title="Undo">‹</button>
+            <button class="ctrl-btn" id="btn-reset" title="Reset">↺</button>
+            <button class="ctrl-btn" id="btn-next" title="Redo (n/a)" disabled>›</button>
+            <button class="ctrl-btn" id="btn-last" title="Last" disabled>⇥</button>
+          </div>
+
+        </aside>
+
+      </main>
+
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

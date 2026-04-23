@@ -1,12 +1,14 @@
 import { Board, Pieces, getType, getColor, getPiece } from './board.js';
 import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from './moveGen.js';
 import { FOUR_PLAYER_CASTLE } from './variants.js';
+import { GameState } from '../state/gameState.js';
+import { Move, Square, PieceType, UndoData, VariantConfig } from '../types.js';
 
 /**
  * Executes a move on the board and updates game state.
  * Returns UndoData for unmakeMove.
  */
-export function makeMove(board, state, move) {
+export function makeMove(board: Board, state: GameState, move: Move): UndoData {
   const from  = moveFrom(move);
   const to    = moveTo(move);
   const flag  = moveFlag(move);
@@ -19,8 +21,8 @@ export function makeMove(board, state, move) {
   const variant  = board.variant;
 
   // 1. RECORD UNDO DATA
-  const undo = {
-    captured: Pieces.EMPTY,
+  const undo: UndoData = {
+    captured: PieceType.EMPTY,
     turn: state.turn,
     castling: state.castling.map(c => ({ ...c })),
     epSquare: state.epSquare,
@@ -32,7 +34,7 @@ export function makeMove(board, state, move) {
 
   // 2. UPDATE STATE CLOCKS & EP
   state.epSquare = null;
-  if (type === Pieces.PAWN || captured !== Pieces.EMPTY) {
+  if (type === PieceType.PAWN || captured !== PieceType.EMPTY) {
     state.halfmoveClock = 0;
   } else {
     state.halfmoveClock++;
@@ -74,7 +76,7 @@ export function makeMove(board, state, move) {
   return undo;
 }
 
-function handleCastlingPhysical(board, color, flag) {
+function handleCastlingPhysical(board: Board, color: number, flag: number): void {
   if (board.variant.name === 'standard') {
     if (color === 0) { // White
       if (flag === FLAGS.CASTLE_K) { board.removeByIndex(7); board.setByIndex(5, getPiece(0, Pieces.ROOK)); }
@@ -95,13 +97,13 @@ function handleCastlingPhysical(board, color, flag) {
   }
 }
 
-function updateCastlingRights(state, from, to, variant, color, type) {
+function updateCastlingRights(state: GameState, from: Square, to: Square, variant: VariantConfig, color: number, type: number): void {
   if (variant.name === 'standard') {
     if (type === Pieces.KING) {
       state.castling[color].kingside = false;
       state.castling[color].queenside = false;
     }
-    const rookSquares = { 0: [0, 7], 1: [56, 63] };
+    const rookSquares: Record<number, number[]> = { 0: [0, 7], 1: [56, 63] };
     for (const cIdxStr in rookSquares) {
       const cIdx = parseInt(cIdxStr);
       const [qRook, kRook] = rookSquares[cIdx];
@@ -121,16 +123,16 @@ function updateCastlingRights(state, from, to, variant, color, type) {
   }
 }
 
-export function poofPieces(board, colorIndex) {
-  const pieces = [];
-  for (const idx of [...board.getPieces(colorIndex)]) {
+export function poofPieces(board: Board, colorIndex: number): { idx: Square; piece: number }[] {
+  const pieces: { idx: Square; piece: number }[] = [];
+  for (const idx of Array.from(board.getPieces(colorIndex))) {
     pieces.push({ idx, piece: board.getByIndex(idx) });
     board.removeByIndex(idx);
   }
   return pieces;
 }
 
-export function unmakeMove(board, state, move, undo) {
+export function unmakeMove(board: Board, state: GameState, move: Move, undo: UndoData): void {
   const from = moveFrom(move);
   const to   = moveTo(move);
   const flag = moveFlag(move);
@@ -166,7 +168,7 @@ export function unmakeMove(board, state, move, undo) {
     const forward = board.variant.pawnForward[color];
     const victimIdx = to - forward;
     board.setByIndex(victimIdx, undo.captured);
-  } else if (undo.captured !== Pieces.EMPTY) {
+  } else if (undo.captured !== Pieces.EMPTY) { // Bits: empty is 0
     board.setByIndex(to, undo.captured);
   }
 
@@ -176,7 +178,7 @@ export function unmakeMove(board, state, move, undo) {
   }
 }
 
-function revertCastlingPhysical(board, color, flag) {
+function revertCastlingPhysical(board: Board, color: number, flag: number): void {
   if (board.variant.name === 'standard') {
     if (color === 0) {
       if (flag === FLAGS.CASTLE_K) { board.removeByIndex(5); board.setByIndex(7, getPiece(0, Pieces.ROOK)); }

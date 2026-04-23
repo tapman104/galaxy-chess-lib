@@ -1,14 +1,16 @@
+import { VariantConfig } from '../types.js';
+
 const PGN_RESULTS = new Set(['1-0', '0-1', '1/2-1/2', '*']);
 
-function normalizeFormat(format, numPlayers) {
+function normalizeFormat(format: string | undefined, numPlayers: number): string {
   if (format === '4player' || format === 'verbose' || format === 'standard') {
     return format;
   }
   return numPlayers === 4 ? '4player' : 'standard';
 }
 
-function defaultHeadersFor(variant) {
-  const base = {
+function defaultHeadersFor(variant: VariantConfig | null): Record<string, string> {
+  const base: Record<string, string> = {
     Event: '?',
     Site: '?',
     Date: new Date().toISOString().split('T')[0].replace(/-/g, '.'),
@@ -33,13 +35,13 @@ function defaultHeadersFor(variant) {
   };
 }
 
-function orderedHeaderEntries(headers, variant) {
+function orderedHeaderEntries(headers: Record<string, string>, variant: VariantConfig | null): [string, string][] {
   const preferred = variant?.numPlayers === 4
     ? ['Event', 'Site', 'Date', 'Round', 'Red', 'Blue', 'Yellow', 'Green', 'Result', 'Variant']
     : ['Event', 'Site', 'Date', 'Round', 'White', 'Black', 'Result', 'Variant'];
 
-  const seen = new Set();
-  const entries = [];
+  const seen = new Set<string>();
+  const entries: [string, string][] = [];
 
   for (const key of preferred) {
     if (Object.prototype.hasOwnProperty.call(headers, key)) {
@@ -59,7 +61,7 @@ function orderedHeaderEntries(headers, variant) {
   return entries;
 }
 
-function stripPgnHeadersAndNoise(pgn) {
+function stripPgnHeadersAndNoise(pgn: string): string {
   return pgn
     .replace(/\[.*?\]/g, '')
     .replace(/\{.*?\}/g, '')
@@ -69,7 +71,7 @@ function stripPgnHeadersAndNoise(pgn) {
     .trim();
 }
 
-function extractTokens(moveText) {
+function extractTokens(moveText: string): string[] {
   return moveText
     .replace(/\d+\.(\.\.)?/g, ' ')
     .split(/\s+/)
@@ -77,22 +79,22 @@ function extractTokens(moveText) {
     .filter((token) => !PGN_RESULTS.has(token));
 }
 
-function wrap(text, width = 96) {
-  const chunks = [];
+function wrap(text: string, width: number = 96): string {
+  const chunks: string[] = [];
   for (let i = 0; i < text.length; i += width) {
     chunks.push(text.slice(i, i + width));
   }
   return chunks.join('\n');
 }
 
-function labelForPlayer(player, turnLabels) {
-  if (Number.isInteger(player) && player >= 0 && player < turnLabels.length) {
+function labelForPlayer(player: number | undefined, turnLabels: string[]): string {
+  if (typeof player === 'number' && player >= 0 && player < turnLabels.length) {
     return turnLabels[player];
   }
-  return `P${Number.isInteger(player) ? player : '?'}`;
+  return `P${typeof player === 'number' ? player : '?'}`;
 }
 
-function moveSanFrom(entry) {
+function moveSanFrom(entry: any): string {
   return entry?.san || entry?.move?.san || '...';
 }
 
@@ -100,12 +102,23 @@ function moveSanFrom(entry) {
  * Export history to PGN string.
  * Supports: standard (2p), 4player labels, verbose (debug-oriented).
  *
- * @param {Array<{san: string, player?: number, move?: Object}>} history
+ * @param {Array<{san: string, player?: number, move?: any}>} history
  * @param {Object} headers
  * @param {Object} options
  * @returns {string}
  */
-export function exportPGN(history, headers = {}, options = {}) {
+export function exportPGN(
+  history: any[], 
+  headers: Record<string, string> = {}, 
+  options: { 
+    variant?: VariantConfig | null, 
+    numPlayers?: number, 
+    format?: string, 
+    includeHeaders?: boolean, 
+    turnLabels?: string[], 
+    wrapWidth?: number 
+  } = {}
+): string {
   const variant = options.variant || null;
   const numPlayers = options.numPlayers || variant?.numPlayers || 2;
   const format = normalizeFormat(options.format, numPlayers);
@@ -124,7 +137,7 @@ export function exportPGN(history, headers = {}, options = {}) {
   }
 
   const groupSize = format === 'standard' ? 2 : numPlayers;
-  const tokens = [];
+  const tokens: string[] = [];
 
   for (let i = 0; i < history.length; i++) {
     if (i % groupSize === 0) {
@@ -161,8 +174,8 @@ export function exportPGN(history, headers = {}, options = {}) {
  * Parse PGN into headers and SAN move list.
  * Supports `standard`, `4player`, and `verbose`.
  */
-export function parsePGN(pgn, options = {}) {
-  const headers = {};
+export function parsePGN(pgn: string, options: { numPlayers?: number, format?: string, variant?: string } = {}): { headers: Record<string, string>, moves: string[] } {
+  const headers: Record<string, string> = {};
   const headerRegex = /\[(\w+)\s+"((?:[^"\\]|\\.)*)"\]/g;
   let match;
   while ((match = headerRegex.exec(pgn)) !== null) {
@@ -175,7 +188,7 @@ export function parsePGN(pgn, options = {}) {
   const moveText = stripPgnHeadersAndNoise(pgn);
   const rawTokens = extractTokens(moveText);
 
-  const moves = [];
+  const moves: string[] = [];
   for (const token of rawTokens) {
     if (token === '...') continue;
 

@@ -9,14 +9,27 @@ import { moveToSAN, sanToMove } from './san.js';
 import { parsePGN, exportPGN } from './pgn.js';
 import { InvalidMoveError, InvalidFENError } from './errors.js';
 import { resolveVariant, variantId } from '../core/variants.js';
+import { 
+  ChessOptions, 
+  MoveObject, 
+  HistoryEntry, 
+  UndoData, 
+  GameStateSnapshot, 
+  MoveInput, 
+  Move, 
+  Square, 
+  PieceType, 
+  VariantConfig,
+  PositionCountEntry
+} from '../types.js';
 
-function cloneMoveObject(move) {
+function cloneMoveObject(move?: MoveObject): MoveObject | undefined {
   if (!move) return undefined;
   return { ...move };
 }
 
-function cloneUndo(undo) {
-  if (!undo) return undefined;
+function cloneUndo(undo: UndoData): UndoData {
+  if (!undo) return undo;
   return {
     captured: undo.captured,
     turn: undo.turn,
@@ -25,22 +38,24 @@ function cloneUndo(undo) {
     playerStatus: Array.isArray(undo.playerStatus) ? [...undo.playerStatus] : [],
     halfmoveClock: undo.halfmoveClock,
     fullmoveNumber: undo.fullmoveNumber,
-    eliminatedAtOnce: Array.isArray(undo.eliminatedAtOnce) ? [...undo.eliminatedAtOnce] : null,
+    eliminatedAtOnce: Array.isArray(undo.eliminatedAtOnce) ? undo.eliminatedAtOnce.map(e => ({ ...e })) : null,
   };
 }
 
-function serializeHistoryEntry(entry) {
+function serializeHistoryEntry(entry: HistoryEntry): any {
   return {
     moveInt: entry.moveInt,
     san: entry.san,
     player: entry.player,
-    hash: typeof entry.hash === 'bigint' ? entry.hash.toString() : entry.hash,
+    hash: entry.hash.toString(),
     move: cloneMoveObject(entry.move),
     undo: cloneUndo(entry.undo),
+    type: entry.type,
+    eliminatedPlayers: entry.eliminatedPlayers ? [...entry.eliminatedPlayers] : undefined,
   };
 }
 
-function deserializeHistoryEntry(entry) {
+function deserializeHistoryEntry(entry: any): HistoryEntry {
   return {
     moveInt: entry.moveInt || 0,
     san: entry.san || '',
@@ -48,18 +63,20 @@ function deserializeHistoryEntry(entry) {
     hash: typeof entry.hash === 'string' ? BigInt(entry.hash) : BigInt(entry.hash || 0),
     move: cloneMoveObject(entry.move),
     undo: cloneUndo(entry.undo),
+    type: entry.type,
+    eliminatedPlayers: entry.eliminatedPlayers ? [...entry.eliminatedPlayers] : undefined,
   };
 }
 
-function serializePositionCounts(positionCounts) {
+function serializePositionCounts(positionCounts: Map<bigint, number>): PositionCountEntry[] {
   return Array.from(positionCounts.entries()).map(([hash, count]) => ({
     hash: hash.toString(),
     count,
   }));
 }
 
-function deserializePositionCounts(entries) {
-  const map = new Map();
+function deserializePositionCounts(entries: PositionCountEntry[]): Map<bigint, number> {
+  const map = new Map<bigint, number>();
   for (const row of entries || []) {
     if (!row || typeof row.hash !== 'string') continue;
     map.set(BigInt(row.hash), Number(row.count) || 0);
@@ -67,7 +84,7 @@ function deserializePositionCounts(entries) {
   return map;
 }
 
-function normalizeTurnToAlive(state) {
+function normalizeTurnToAlive(state: GameState): void {
   if (state.playerStatus.some(Boolean) === false) {
     state.playerStatus.fill(true);
   }
@@ -78,12 +95,20 @@ function normalizeTurnToAlive(state) {
 }
 
 export class Chess {
-  constructor(options = {}) {
+  private _board: Board;
+  private _state: GameState;
+  private _history: HistoryEntry[];
+  private _positionCounts: Map<bigint, number>;
+  private _headers: Record<string, string>;
+  private _meta: any;
+  private _createdAt: string;
+
+  constructor(options: ChessOptions = {}) {
     const variant = resolveVariant(options.variant || 'standard');
     this._board = new Board(variant);
     this._state = new GameState(variant);
-    this._history = []; // {moveInt, undo, san, hash, player, move}
-    this._positionCounts = new Map(); // hash -> count
+    this._history = [];
+    this._positionCounts = new Map();
     this._headers = {};
     this._meta = options.meta && typeof options.meta === 'object' ? { ...options.meta } : {};
     this._createdAt = this._meta.createdAt || new Date().toISOString();
@@ -95,7 +120,7 @@ export class Chess {
   /**
    * Resets the game to its initial starting position.
    */
-  reset() {
+  reset(): void {
     this._board.setup();
     this._state = new GameState(this._board.variant);
     this._history = [];
@@ -105,12 +130,8 @@ export class Chess {
 
   /**
    * Loads a position from a FEN string.
-   * @param {string} fen The FEN string to load.
-   * @param {Object} [options]
-   * @param {string} [options.variant] Override the variant detection.
-   * @returns {Chess} This instance.
    */
-  load(fen, options = {}) {
+  load(fen: string, options: { variant?: string } = {}): this {
     try {
       const variant = options.variant ? resolveVariant(options.variant) : this._board.variant;
       const { board, state } = parseFEN(fen, variant);
@@ -120,30 +141,25 @@ export class Chess {
       this._positionCounts.clear();
       this._updateHash();
       return this;
-    } catch (e) {
+    } catch (e: any) {
       throw new InvalidFENError(e.message);
     }
   }
 
   /**
    * Gets or sets PGN headers.
-   * @param {...string} args If one argument, returns that header value. If two, sets that header. If none, returns all headers.
-   * @returns {string|Object|undefined}
    */
-  header(...args) {
-    if (args.length === 0) return this._headers;
-    if (args.length === 1) return this._headers[args[0]];
-    if (args.length >= 2) {
-      this._headers[args[0]] = args[1];
-    }
+  header(key?: string, value?: string): string | Record<string, string> | undefined | this {
+    if (key === undefined) return this._headers;
+    if (value === undefined) return this._headers[key];
+    this._headers[key] = value;
+    return this;
   }
 
   /**
    * Loads the game state from a JSON object.
-   * @param {Object} data
-   * @returns {Chess}
    */
-  loadJSON(data) {
+  loadJSON(data: GameStateSnapshot): this {
     if (!data || typeof data !== 'object') {
       throw new InvalidFENError('Invalid JSON payload');
     }
@@ -221,15 +237,15 @@ export class Chess {
     return this;
   }
 
-  toJSON(options = {}) {
-    const payload = {
+  toJSON(options: { includeMeta?: boolean } = {}): GameStateSnapshot {
+    const payload: GameStateSnapshot = {
       variant: variantId(this._board.variant),
       board: Array.from(this._board.squares),
       validSquares: Array.from(this._board.validSquares),
       turn: this._state.turn,
       activePlayers: this._state.playerStatus
         .map((alive, index) => (alive ? index : null))
-        .filter((value) => value !== null),
+        .filter((value): value is number => value !== null),
       history: this._history.map(serializeHistoryEntry),
       castling: this._state.castling.map((c) => ({
         kingside: !!c.kingside,
@@ -250,18 +266,17 @@ export class Chess {
 
   /**
    * Returns the FEN string for the current position.
-   * @returns {string}
    */
-  fen() {
+  fen(): string {
     return exportFEN(this._board, this._state);
   }
 
-  variant() {
+  variant(): string {
     return variantId(this._board.variant);
   }
 
-  clone() {
-    const next = new Chess({ variant: this._board.variant });
+  clone(): Chess {
+    const next = new Chess({ variant: this._board.variant.name });
     next._board = this._board.clone();
     next._state = this._state.clone();
     next._history = this._history.map((entry) => deserializeHistoryEntry(serializeHistoryEntry(entry)));
@@ -274,14 +289,10 @@ export class Chess {
 
   /**
    * Returns a list of legal moves from the current position.
-   * @param {Object} [options]
-   * @param {string} [options.square] Filter moves by the starting square (e.g., 'e2').
-   * @param {boolean} [options.verbose] Return objects instead of SAN strings.
-   * @returns {string[]|Object[]} An array of SAN strings or move objects.
    */
-  moves(options = {}) {
+  moves(options: { square?: string, verbose?: boolean } = {}): string[] | MoveObject[] {
     const legal = getLegalMoves(this._board, this._state);
-    const results = [];
+    const results: any[] = [];
 
     for (let i = 0; i < legal.count; i++) {
       const m = legal.moves[i];
@@ -302,11 +313,8 @@ export class Chess {
 
   /**
    * Makes a move on the board.
-   * @param {string|Object} moveInput The move (e.g., 'e4' or {from: 'e2', to: 'e4'})
-   * @throws {InvalidMoveError} If the move is illegal or malformed.
-   * @returns {Object} The move object describing the change.
    */
-  move(moveInput) {
+  move(moveInput: string | MoveInput): MoveObject {
     let moveInt = 0;
     const legal = getLegalMoves(this._board, this._state);
 
@@ -325,14 +333,11 @@ export class Chess {
     
     const undo = makeMove(this._board, this._state, moveInt);
 
-    // After a move in multi-player variants:
-    // 1. If a king was directly captured, eliminate that player immediately.
-    // 2. Then check if the newly active player is in checkmate (chain eliminations).
     const capturedColor = (undo.captured !== Pieces.EMPTY && getType(undo.captured) === Pieces.KING)
       ? getColor(undo.captured)
       : -1;
 
-    let eliminatedPlayers = [];
+    let eliminatedPlayers: number[] = [];
 
     if (this._board.variant.numPlayers > 2) {
       if (capturedColor !== -1 && this._state.playerStatus[capturedColor]) {
@@ -341,7 +346,6 @@ export class Chess {
         if (!Array.isArray(undo.eliminatedAtOnce)) undo.eliminatedAtOnce = [];
         undo.eliminatedAtOnce.push(...poofed);
         eliminatedPlayers.push(capturedColor);
-        // If it's now the eliminated player's turn, skip to next alive player
         if (this._state.turn === capturedColor) this._state.nextTurn();
       }
       const chained = this._processCheckmateEliminations(undo);
@@ -368,46 +372,39 @@ export class Chess {
   }
 
   /**
-   * Undoes the last move, including resignations and elimination chains.
-   * @returns {Object|null} The move object that was undone, or null if no history.
+   * Undoes the last move.
    */
-  undo() {
+  undo(): MoveObject | { type: 'resign', player: number, color: string } | null {
     const last = this._history.pop();
     if (!last) return null;
 
     if (last.type === 'resign') {
       this._decHash(last.hash);
-      // Restore player status
       this._state.playerStatus[last.player] = true;
-      // Restore poofed pieces
       if (last.undo && last.undo.eliminatedAtOnce) {
         for (const { idx, piece } of last.undo.eliminatedAtOnce) {
           this._board.setByIndex(idx, piece);
         }
       }
-      this._state.turn = last.undo.turn; // Restore turn to the player who was resigned
+      this._state.turn = last.undo.turn;
       return { type: 'resign', player: last.player, color: this._colorToChar(last.player) };
     }
 
     this._decHash(last.hash);
     unmakeMove(this._board, this._state, last.moveInt, last.undo);
-    if (last.move) return cloneMoveObject(last.move);
+    if (last.move) return cloneMoveObject(last.move) as MoveObject;
     return this._makeMoveObject(last.moveInt, last.san, last.player);
   }
 
   /**
-   * Voluntarily eliminate a player (resign in 4-player, or forfeit).
-   * For 2-player standard games this is recorded as a resignation.
-   * Resignations are stored in history and can be undone.
-   * @param {number|string} player The player index or label to resign.
-   * @returns {boolean} True if the player was successfully eliminated.
+   * Resign as a player.
    */
-  resign(player) {
+  resign(player: number | string): boolean {
     const playerIndex = this._resolvePlayer(player);
     if (playerIndex < 0 || playerIndex >= this._board.variant.numPlayers) {
       return false;
     }
-    if (!this._state.playerStatus[playerIndex]) return false; // already eliminated
+    if (!this._state.playerStatus[playerIndex]) return false;
 
     const playerBefore = this._state.turn;
     const poofed = poofPieces(this._board, playerIndex);
@@ -426,18 +423,21 @@ export class Chess {
       undo: {
         turn: playerBefore,
         eliminatedAtOnce: poofed,
-      }
+        captured: Pieces.EMPTY,
+        castling: this._state.castling.map(c => ({ ...c })),
+        epSquare: this._state.epSquare,
+        playerStatus: [...this._state.playerStatus],
+        halfmoveClock: this._state.halfmoveClock,
+        fullmoveNumber: this._state.fullmoveNumber
+      } as UndoData,
+      moveInt: 0
     });
 
     this._incHash(hash);
     return true;
   }
 
-  /**
-   * Returns the current turn as a string ('w', 'b', 'r', etc).
-   * @returns {string}
-   */
-  turn() {
+  turn(): string {
     if (this._board.variant.name === 'standard') {
       return this._state.turn === 0 ? 'w' : 'b';
     }
@@ -445,74 +445,43 @@ export class Chess {
     return map[this._state.turn] || `p${this._state.turn}`;
   }
 
-  /**
-   * Returns the current turn index (0, 1, 2, 3).
-   * @returns {number}
-   */
-  turnIndex() {
+  turnIndex(): number {
     return this._state.turn;
   }
 
-  /**
-   * Returns true if the specified player is still in the game.
-   * @param {number|string} player
-   * @returns {boolean}
-   */
-  isAlive(player) {
+  isAlive(player: number | string): boolean {
     const colorIndex = this._resolvePlayer(player);
     return !!this._state.playerStatus[colorIndex];
   }
 
-
-  /**
-   * Returns true if the specified player is currently in check.
-   * @param {number|string} [player] Player token or index. Defaults to current side to move.
-   * @returns {boolean}
-   */
-  inCheck(player) {
+  inCheck(player?: number | string): boolean {
     const colorIndex = this._resolvePlayer(player);
     if (!this._state.playerStatus[colorIndex]) return false;
     return inCheck(this._board, this._state, colorIndex);
   }
 
-  /**
-   * Returns true if the specified player is in checkmate.
-   * @param {number|string} [player]
-   * @returns {boolean}
-   */
-  inCheckmate(player) {
+  inCheckmate(player?: number | string): boolean {
     const colorIndex = this._resolvePlayer(player);
     if (!this._state.playerStatus[colorIndex]) return false;
-    // Use a temp state to check legality for a specific player
     const tempState = this._state.clone();
     tempState.turn = colorIndex;
     return inCheck(this._board, tempState, colorIndex) && getLegalMoves(this._board, tempState).count === 0;
   }
 
-  /**
-   * Returns true if the specified player is in stalemate.
-   * @param {number|string} [player]
-   * @returns {boolean}
-   */
-  inStalemate(player) {
+  inStalemate(player?: number | string): boolean {
     const colorIndex = this._resolvePlayer(player);
     if (!this._state.playerStatus[colorIndex]) return false;
-    // Use a temp state to check legality for a specific player
     const tempState = this._state.clone();
     tempState.turn = colorIndex;
     return !inCheck(this._board, tempState, colorIndex) && getLegalMoves(this._board, tempState).count === 0;
   }
 
-  /**
-   * Returns true if the current position has occurred at least 3 times.
-   * @returns {boolean}
-   */
-  inThreefoldRepetition() {
+  inThreefoldRepetition(): boolean {
     const currentHash = computeHash(this._board, this._state);
     return (this._positionCounts.get(currentHash) || 0) >= 3;
   }
 
-  insufficientMaterial() {
+  insufficientMaterial(): boolean {
     if (this._board.variant.name === 'standard') {
       const w = Array.from(this._board.getPieces(0));
       const b = Array.from(this._board.getPieces(1));
@@ -521,17 +490,20 @@ export class Chess {
       if (total === 2) return true;
 
       if (total === 3) {
-        const extra = w.concat(b).find((idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING);
-        const piece = this._board.getByIndex(extra);
-        const type = getType(piece);
-        if (type === Pieces.KNIGHT || type === Pieces.BISHOP) return true;
+        const allIndices = [...w, ...b];
+        const extra = allIndices.find((idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING);
+        if (extra !== undefined) {
+          const piece = this._board.getByIndex(extra);
+          const type = getType(piece);
+          if (type === Pieces.KNIGHT || type === Pieces.BISHOP) return true;
+        }
       }
 
       if (total === 4) {
         if (w.length === 2 && b.length === 2) {
           const wb = w.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
           const bb = b.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
-          if (wb && bb) {
+          if (wb !== undefined && bb !== undefined) {
             const color1 = (this._board.file(wb) + this._board.rank(wb)) % 2;
             const color2 = (this._board.file(bb) + this._board.rank(bb)) % 2;
             if (color1 === color2) return true;
@@ -555,10 +527,11 @@ export class Chess {
       if (total === 2) return true;
 
       if (total === 3) {
-        const extra = [...pieces0, ...pieces1].find(
+        const allIndices = [...pieces0, ...pieces1];
+        const extra = allIndices.find(
           (idx) => getType(this._board.getByIndex(idx)) !== Pieces.KING,
         );
-        if (extra != null) {
+        if (extra !== undefined) {
           const t = getType(this._board.getByIndex(extra));
           if (t === Pieces.KNIGHT || t === Pieces.BISHOP) return true;
         }
@@ -567,7 +540,7 @@ export class Chess {
       if (total === 4 && pieces0.length === 2 && pieces1.length === 2) {
         const wb = pieces0.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
         const bb = pieces1.find((idx) => getType(this._board.getByIndex(idx)) === Pieces.BISHOP);
-        if (wb != null && bb != null) {
+        if (wb !== undefined && bb !== undefined) {
           const c1 = (this._board.file(wb) + this._board.rank(wb)) % 2;
           const c2 = (this._board.file(bb) + this._board.rank(bb)) % 2;
           if (c1 === c2) return true;
@@ -579,7 +552,7 @@ export class Chess {
     return false;
   }
 
-  inDraw() {
+  inDraw(): boolean {
     return (
       this._state.halfmoveClock >= 100 ||
       this.inStalemate() ||
@@ -588,8 +561,7 @@ export class Chess {
     );
   }
 
-  isGameOver() {
-    // 4-player: game ends when only one player is still alive
+  isGameOver(): boolean {
     if (this._board.variant.numPlayers > 2) {
       const alive = this._state.playerStatus.filter(Boolean).length;
       return alive <= 1;
@@ -597,28 +569,15 @@ export class Chess {
     return this.inCheckmate() || this.inDraw();
   }
 
-  /**
-   * Returns the player index (0-based) of the sole surviving player,
-   * or null if the game is still ongoing / ended in a draw.
-   */
-  /**
-   * Returns the winner's player index, or null if the game is ongoing or a draw.
-   * @returns {number|null}
-   */
-  winner() {
+  winner(): number | null {
     const aliveIndices = this._state.playerStatus
       .map((a, i) => (a ? i : -1))
       .filter((i) => i !== -1);
     return aliveIndices.length === 1 ? aliveIndices[0] : null;
   }
 
-  /**
-   * Returns the piece at the specified square.
-   * @param {string} square Algebraic square name (e.g., 'e4').
-   * @returns {{type: string, color: string}|null}
-   */
-  get(square) {
-    let index;
+  get(square: string): { type: string, color: string } | null {
+    let index: Square;
     try {
       index = this._board.algebraicToIndex(square);
     } catch {
@@ -632,14 +591,7 @@ export class Chess {
     };
   }
 
-  /**
-   * Returns the move history of the game.
-   * @param {Object} [options]
-   * @param {boolean} [options.verbose] If true, returns full move objects.
-   * @param {boolean} [options.withPlayers] If true, returns moves with player info.
-   * @returns {string[]|Object[]}
-   */
-  history(options = {}) {
+  history(options: { verbose?: boolean, withPlayers?: boolean } = {}): string[] | MoveObject[] | { san: string, player: number }[] {
     if (options.verbose) {
       return this._history.map((h) => cloneMoveObject(h.move) || this._makeMoveObject(h.moveInt, h.san, h.player));
     }
@@ -649,36 +601,20 @@ export class Chess {
     return this._history.map((h) => h.san);
   }
 
-  /**
-   * Returns an ASCII representation of the board.
-   * @returns {string}
-   */
-  ascii() {
+  ascii(): string {
     return this._board.toString();
   }
 
-  header(key, value) {
-    if (typeof key !== 'string' || key.trim() === '') return this;
-    this._headers[key] = String(value);
-    return this;
-  }
-
-  headers() {
+  headers(): Record<string, string> {
     return { ...this._headers };
   }
 
-  clearHeaders() {
+  clearHeaders(): this {
     this._headers = {};
     return this;
   }
 
-  /**
-   * Returns a representation of the board state.
-   * @param {Object} [options]
-   * @param {boolean} [options.raw] If true, returns the raw square data.
-   * @returns {Object}
-   */
-  board(options = {}) {
+  board(options: { raw?: boolean } = {}): any {
     const variant = variantId(this._board.variant);
     if (options.raw === true) {
       return {
@@ -717,12 +653,7 @@ export class Chess {
     };
   }
 
-  /**
-   * Returns the PGN representation of the game.
-   * @param {Object} [options]
-   * @returns {string}
-   */
-  pgn(options = {}) {
+  pgn(options: any = {}): string {
     const historyObjs = this._history.map((h) => ({ san: h.san, player: h.player, move: h.move }));
     const headers = { Variant: variantId(this._board.variant), ...this._headers };
     return exportPGN(historyObjs, headers, {
@@ -733,13 +664,7 @@ export class Chess {
     });
   }
 
-  /**
-   * Loads a game from a PGN string.
-   * @param {string} pgn The PGN string.
-   * @param {Object} [options]
-   * @returns {Chess}
-   */
-  loadPgn(pgn, options = {}) {
+  loadPgn(pgn: string, options: any = {}): this {
     const { headers, moves } = parsePGN(pgn, options);
 
     const targetVariant = options.variant
@@ -760,43 +685,32 @@ export class Chess {
     return this;
   }
 
-  /**
-   * Called after every 4-player move. Checks if the newly active player (and
-   * any chain of subsequent players) has no legal moves while in check
-   * (checkmate). Each such player is eliminated and their pieces are removed.
-   * All eliminated pieces are accumulated into undo.eliminatedAtOnce so that
-   * unmakeMove can restore them on undo.
-   */
-  _processCheckmateEliminations(undo) {
+  private _processCheckmateEliminations(undo: UndoData): number[] {
     if (!Array.isArray(undo.eliminatedAtOnce)) {
       undo.eliminatedAtOnce = [];
     }
 
-    const eliminated = [];
-    // At most (numPlayers − 1) consecutive eliminations in a single move.
+    const eliminated: number[] = [];
     const numPlayers = this._board.variant.numPlayers;
     for (let i = 0; i < numPlayers - 1; i++) {
       const alive = this._state.playerStatus.filter(Boolean).length;
-      if (alive <= 1) break; // Only one player left — game over
+      if (alive <= 1) break;
 
-      // Check if current player has any legal escape
       const legal = getLegalMoves(this._board, this._state);
-      if (legal.count > 0) break; // They have moves — normal play continues
+      if (legal.count > 0) break;
 
-      // No legal moves (checkmate or stalemate) — eliminate and poof all their pieces
       const victim = this._state.turn;
       eliminated.push(victim);
       this._state.eliminatePlayer(victim);
       const poofed = poofPieces(this._board, victim);
       undo.eliminatedAtOnce.push(...poofed);
 
-      // Advance to the next alive player and check them too
       this._state.nextTurn();
     }
     return eliminated;
   }
 
-  _buildMeta() {
+  private _buildMeta(): any {
     return {
       createdAt: this._createdAt,
       players: this._board.variant.playerLabels || [],
@@ -805,29 +719,29 @@ export class Chess {
     };
   }
 
-  _updateHash() {
+  private _updateHash(): void {
     const hash = computeHash(this._board, this._state);
     this._positionCounts.set(hash, 1);
   }
 
-  _incHash(hash) {
+  private _incHash(hash: bigint): void {
     this._positionCounts.set(hash, (this._positionCounts.get(hash) || 0) + 1);
   }
 
-  _decHash(hash) {
+  private _decHash(hash: bigint): void {
     const count = this._positionCounts.get(hash);
     if (count === 1) this._positionCounts.delete(hash);
-    else if (count > 1) this._positionCounts.set(hash, count - 1);
+    else if (count && count > 1) this._positionCounts.set(hash, count - 1);
   }
 
-  _resolvePackedMove(input, legal) {
+  private _resolvePackedMove(input: MoveInput | any, legal: { moves: Int32Array, count: number }): number {
     if (!input || typeof input !== 'object') return 0;
 
-    let from;
-    let to;
+    let from: Square;
+    let to: Square;
     try {
-      from = this._board.algebraicToIndex(input.from);
-      to = this._board.algebraicToIndex(input.to);
+      from = typeof input.from === 'string' ? this._board.algebraicToIndex(input.from) : input.from;
+      to = typeof input.to === 'string' ? this._board.algebraicToIndex(input.to) : input.to;
     } catch {
       return 0;
     }
@@ -845,14 +759,14 @@ export class Chess {
     return 0;
   }
 
-  _makeMoveObject(moveInt, san, playerIndex = this._state.turn) {
+  private _makeMoveObject(moveInt: number, san: string, playerIndex: number = this._state.turn): MoveObject {
     const from = moveFrom(moveInt);
     const to = moveTo(moveInt);
     const flag = moveFlag(moveInt);
     const promo = movePromo(moveInt);
     const piece = this._board.getByIndex(from);
 
-    let captured;
+    let captured: string | undefined;
     if (flag === FLAGS.CAPTURE || flag === FLAGS.PROMO_CAPTURE) {
       const target = this._board.getByIndex(to);
       captured = target !== Pieces.EMPTY ? this._typeToChar(getType(target)) : undefined;
@@ -872,8 +786,8 @@ export class Chess {
     };
   }
 
-  _typeToChar(type) {
-    const map = {
+  private _typeToChar(type: number): string {
+    const map: Record<number, string> = {
       [Pieces.PAWN]: 'p',
       [Pieces.KNIGHT]: 'n',
       [Pieces.BISHOP]: 'b',
@@ -884,7 +798,7 @@ export class Chess {
     return map[type] || '';
   }
 
-  _colorToChar(color) {
+  private _colorToChar(color: number): string {
     if (this._board.variant.name === 'standard') {
       return color === 0 ? 'w' : 'b';
     }
@@ -892,12 +806,13 @@ export class Chess {
     return map[color] || `p${color}`;
   }
 
-  _turnCharFor(playerIndex) {
+  private _turnCharFor(playerIndex: number): string {
     return this._colorToChar(playerIndex);
   }
 
-  _charToPromo(char) {
-    const map = {
+  private _charToPromo(char: string | PieceType): number {
+    if (typeof char === 'number') return char;
+    const map: Record<string, number> = {
       n: Pieces.KNIGHT,
       b: Pieces.BISHOP,
       r: Pieces.ROOK,
@@ -906,7 +821,7 @@ export class Chess {
     return map[char.toLowerCase()] || 0;
   }
 
-  _getFlagChar(flag) {
+  private _getFlagChar(flag: number): string {
     if (flag === FLAGS.QUIET) return 'n';
     if (flag === FLAGS.DOUBLE_PUSH) return 'b';
     if (flag === FLAGS.CASTLE_K) return 'k';
@@ -918,15 +833,9 @@ export class Chess {
     return 'n';
   }
 
-  /**
-   * Resolves a player identifier (index, name, or character) to an index.
-   * @param {number|string} player
-   * @returns {number} The 0-based player index.
-   * @private
-   */
-  _resolvePlayer(player) {
+  private _resolvePlayer(player?: number | string): number {
     if (player === undefined || player === null) return this._state.turn;
-    if (Number.isInteger(player)) {
+    if (typeof player === 'number') {
       if (player < 0 || player >= this._board.variant.numPlayers) return this._state.turn;
       return player;
     }
@@ -936,7 +845,7 @@ export class Chess {
       if (p === 'w' || p === 'white') return 0;
       if (p === 'b' || p === 'black') return 1;
     } else if (this._board.variant.name === '4player') {
-      const map = { r: 0, red: 0, b: 1, blue: 1, y: 2, yellow: 2, g: 3, green: 3 };
+      const map: Record<string, number> = { r: 0, red: 0, b: 1, blue: 1, y: 2, yellow: 2, g: 3, green: 3 };
       if (map[p] !== undefined) return map[p];
       if (p.startsWith('p')) {
         const idx = parseInt(p.substring(1));

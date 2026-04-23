@@ -1,12 +1,20 @@
-import { STANDARD, FOUR_PLAYER, TYPES, COLORS, getColor, getType, getPiece } from './variants.js';
+import { STANDARD, FOUR_PLAYER, Pieces, getColor, getType, getPiece } from './variants.js';
+import { VariantConfig, Square, AlgebraicSquare, Color, PieceType } from '../types.js';
 
-export { TYPES as Pieces, COLORS, getColor, getType, getPiece };
+export { Pieces, getColor, getType, getPiece };
 
 /**
  * Board — Variant-aware state container
  */
 export class Board {
-  constructor(variant = STANDARD) {
+  public variant: VariantConfig;
+  public width: number;
+  public height: number;
+  public squares: Int8Array;
+  public validSquares: Uint8Array;
+  public pieceList: Set<Square>[];
+
+  constructor(variant: VariantConfig = STANDARD) {
     this.variant = variant;
     this.width = variant.width;
     this.height = variant.height;
@@ -21,18 +29,11 @@ export class Board {
     }
 
     // Piece lists for each player (Set of indices)
-    this.pieceList = Array.from({ length: variant.numPlayers }, () => new Set());
+    this.pieceList = Array.from({ length: variant.numPlayers }, () => new Set<Square>());
   }
 
   /** @private */
-  _applyCornerMask(maskSize) {
-    // Top-left: (0,0) to (2,2) for 3x3
-    // Bottom-left: (0, height-mask) to (mask-1, height-1)
-    // Actually, chess rank 1 is BOTTOM. Rank 14 is TOP.
-    // Index increases: a1 (left-bottom) = 0, a14 (left-top) = (14*13) = 182?
-    // Let's use rank 0-13, file 0-13.
-    // Red (Bottom): Ranks 0,1. 
-    // corners are (0,0) to (mask-1, mask-1), (width-mask, 0) to (width-1, mask-1), etc.
+  private _applyCornerMask(maskSize: number): void {
     for (let r = 0; r < this.height; r++) {
       for (let f = 0; f < this.width; f++) {
         const isCorner = 
@@ -51,41 +52,44 @@ export class Board {
   // ENGINE LAYER
   // ═══════════════════════════════════════════════════════════════════
 
-  getByIndex(idx) {
+  public getByIndex(idx: Square): number {
     return this.squares[idx];
   }
 
-  setByIndex(idx, piece) {
+  public setByIndex(idx: Square, piece: number): void {
     const prev = this.squares[idx];
-    if (prev !== TYPES.EMPTY) {
+    if (prev !== PieceType.EMPTY) {
       this.pieceList[getColor(prev)].delete(idx);
     }
 
     this.squares[idx] = piece;
-    if (piece !== TYPES.EMPTY) {
-      this.pieceList[getColor(piece)].add(idx);
+    if (piece !== PieceType.EMPTY) {
+      const color = getColor(piece);
+      if (this.pieceList[color]) {
+        this.pieceList[color].add(idx);
+      }
     }
   }
 
-  removeByIndex(idx) {
-    this.setByIndex(idx, TYPES.EMPTY);
+  public removeByIndex(idx: Square): void {
+    this.setByIndex(idx, PieceType.EMPTY);
   }
 
-  isValidSquare(idx) {
+  public isValidSquare(idx: Square): boolean {
     return idx >= 0 && idx < this.squares.length && this.validSquares[idx] === 1;
   }
 
-  getPieces(colorIndex) {
+  public getPieces(colorIndex: number): Set<Square> {
     return this.pieceList[colorIndex];
   }
 
-  hasPiece(idx) {
-    return this.squares[idx] !== TYPES.EMPTY;
+  public hasPiece(idx: Square): boolean {
+    return this.squares[idx] !== PieceType.EMPTY;
   }
 
-  isEnemy(idx, myColorIndex) {
+  public isEnemy(idx: Square, myColorIndex: number): boolean {
     const p = this.squares[idx];
-    if (p === TYPES.EMPTY) return false;
+    if (p === PieceType.EMPTY) return false;
     return getColor(p) !== myColorIndex;
   }
 
@@ -93,10 +97,10 @@ export class Board {
   // COORDINATES
   // ═══════════════════════════════════════════════════════════════════
 
-  file(idx) { return idx % this.width; }
-  rank(idx) { return Math.floor(idx / this.width); }
+  public file(idx: Square): number { return idx % this.width; }
+  public rank(idx: Square): number { return Math.floor(idx / this.width); }
 
-  index(file, rank) {
+  public index(file: number, rank: number): Square {
     return rank * this.width + file;
   }
 
@@ -104,12 +108,7 @@ export class Board {
   // VALIDATION & CONVERSION
   // ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * algebraicToIndex('a1')
-   * Standard: 'a1' -> 0, 'h8' -> 63
-   * 4-Player: 'a1' -> 0, 'n14' -> 195
-   */
-  algebraicToIndex(alg) {
+  public algebraicToIndex(alg: AlgebraicSquare): Square {
     const file = alg.charCodeAt(0) - 97; // 'a'
     const rank = parseInt(alg.slice(1)) - 1;
     const idx = this.index(file, rank);
@@ -119,7 +118,7 @@ export class Board {
     return idx;
   }
 
-  indexToAlgebraic(idx) {
+  public indexToAlgebraic(idx: Square): AlgebraicSquare {
     if (!this.isValidSquare(idx)) {
       throw new Error(`Invalid index for variant: ${idx}`);
     }
@@ -132,7 +131,7 @@ export class Board {
   // STATE OPS
   // ═══════════════════════════════════════════════════════════════════
 
-  clone() {
+  public clone(): Board {
     const copy = new Board(this.variant);
     copy.squares = new Int8Array(this.squares);
     for (let i = 0; i < this.pieceList.length; i++) {
@@ -141,12 +140,12 @@ export class Board {
     return copy;
   }
 
-  clear() {
-    this.squares.fill(TYPES.EMPTY);
+  public clear(): void {
+    this.squares.fill(PieceType.EMPTY);
     for (const set of this.pieceList) set.clear();
   }
 
-  setup() {
+  public setup(): void {
     this.clear();
     if (this.variant.name === STANDARD.name) {
       this._setupStandard();
@@ -157,56 +156,50 @@ export class Board {
     }
   }
 
-  _setupStandard() {
-    const pieces = [TYPES.ROOK, TYPES.KNIGHT, TYPES.BISHOP, TYPES.QUEEN, TYPES.KING, TYPES.BISHOP, TYPES.KNIGHT, TYPES.ROOK];
+  private _setupStandard(): void {
+    const pieces = [Pieces.ROOK, Pieces.KNIGHT, Pieces.BISHOP, Pieces.QUEEN, Pieces.KING, Pieces.BISHOP, Pieces.KNIGHT, Pieces.ROOK];
     
     for (let f = 0; f < 8; f++) {
-      this.setByIndex(this.index(f, 0), (0 << 3) | pieces[f]);
-      this.setByIndex(this.index(f, 1), (0 << 3) | TYPES.PAWN);
-      this.setByIndex(this.index(f, 6), (1 << 3) | TYPES.PAWN);
-      this.setByIndex(this.index(f, 7), (1 << 3) | pieces[f]);
+      this.setByIndex(this.index(f, 0), getPiece(Color.WHITE, pieces[f]));
+      this.setByIndex(this.index(f, 1), getPiece(Color.WHITE, Pieces.PAWN));
+      this.setByIndex(this.index(f, 6), getPiece(Color.BLACK, Pieces.PAWN));
+      this.setByIndex(this.index(f, 7), getPiece(Color.BLACK, pieces[f]));
     }
   }
 
-
-  _setupFourPlayer() {
-    const pieces = [TYPES.ROOK, TYPES.KNIGHT, TYPES.BISHOP, TYPES.QUEEN, TYPES.KING, TYPES.BISHOP, TYPES.KNIGHT, TYPES.ROOK];
+  private _setupFourPlayer(): void {
+    const pieces = [Pieces.ROOK, Pieces.KNIGHT, Pieces.BISHOP, Pieces.QUEEN, Pieces.KING, Pieces.BISHOP, Pieces.KNIGHT, Pieces.ROOK];
     
     // RED (Bottom, Color 0): Rows 0, 1. Cols 3-10
     for (let f = 3; f <= 10; f++) {
-      this.setByIndex(this.index(f, 0), (0 << 3) | pieces[f - 3]);
-      this.setByIndex(this.index(f, 1), (0 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(f, 0), getPiece(Color.RED, pieces[f - 3]));
+      this.setByIndex(this.index(f, 1), getPiece(Color.RED, Pieces.PAWN));
     }
     // BLUE (Left, Color 1): Cols 0, 1. Rows 3-10 (moving Right)
     for (let r = 3; r <= 10; r++) {
-      this.setByIndex(this.index(0, r), (1 << 3) | pieces[r - 3]);
-      this.setByIndex(this.index(1, r), (1 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(0, r), getPiece(Color.BLUE, pieces[r - 3]));
+      this.setByIndex(this.index(1, r), getPiece(Color.BLUE, Pieces.PAWN));
     }
     // YELLOW (Top, Color 2): Rows 13, 12. Cols 3-10 (moving Down)
     for (let f = 3; f <= 10; f++) {
-      this.setByIndex(this.index(f, 13), (2 << 3) | pieces[f - 3]);
-      this.setByIndex(this.index(f, 12), (2 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(f, 13), getPiece(Color.YELLOW, pieces[f - 3]));
+      this.setByIndex(this.index(f, 12), getPiece(Color.YELLOW, Pieces.PAWN));
     }
     // GREEN (Right, Color 3): Cols 13, 12. Rows 3-10 (moving Left)
     for (let r = 3; r <= 10; r++) {
-      this.setByIndex(this.index(13, r), (3 << 3) | pieces[r - 3]);
-      this.setByIndex(this.index(12, r), (3 << 3) | TYPES.PAWN);
+      this.setByIndex(this.index(13, r), getPiece(Color.GREEN, pieces[r - 3]));
+      this.setByIndex(this.index(12, r), getPiece(Color.GREEN, Pieces.PAWN));
     }
   }
 
-
-  // ═══════════════════════════════════════════════════════════════════
-  // DEBUGGING
-  // ═══════════════════════════════════════════════════════════════════
-
-  toString() {
-    const SYMBOLS = {
-      [TYPES.PAWN]: 'p', [TYPES.KNIGHT]: 'n', [TYPES.BISHOP]: 'b',
-      [TYPES.ROOK]: 'r', [TYPES.QUEEN]: 'q', [TYPES.KING]: 'k',
-      [TYPES.EMPTY]: '·',
+  public toString(): string {
+    const SYMBOLS: Record<number, string> = {
+      [PieceType.PAWN]: 'p', [PieceType.KNIGHT]: 'n', [PieceType.BISHOP]: 'b',
+      [PieceType.ROOK]: 'r', [PieceType.QUEEN]: 'q', [PieceType.KING]: 'k',
+      [PieceType.EMPTY]: '·',
     };
     
-    const rows = [];
+    const rows: string[] = [];
     for (let r = this.height - 1; r >= 0; r--) {
       let row = `${String(r + 1).padStart(2, ' ')} │`;
       for (let f = 0; f < this.width; f++) {
@@ -216,11 +209,9 @@ export class Board {
           continue;
         }
         const p = this.squares[idx];
-        const char = p === TYPES.EMPTY ? '·' : SYMBOLS[getType(p)];
-        const colorPrefix = p === TYPES.EMPTY ? '' : getColor(p);
-        // Simplified visual: color as background or prefix? Let's just use CASE.
-        // 0=WHITE, 1=BLACK, 2=BLUE, 3=GREEN
-        const renderChar = p === TYPES.EMPTY ? '·' : (getColor(p) === 0 ? char.toUpperCase() : char);
+        const char = p === PieceType.EMPTY ? '·' : SYMBOLS[getType(p)];
+        // Simplified visual: 0=WHITE, 1=BLACK, 2=BLUE, 3=GREEN
+        const renderChar = p === PieceType.EMPTY ? '·' : (getColor(p) === 0 ? char.toUpperCase() : char);
         row += ` ${renderChar}`;
       }
       rows.push(row);
@@ -239,7 +230,7 @@ export class Board {
     ].join('\n');
   }
 
-  static type(piece) { return getType(piece); }
-  static color(piece) { return getColor(piece); }
-  static isColor(piece, colorIndex) { return getColor(piece) === colorIndex; }
+  public static type(piece: number): number { return getType(piece); }
+  public static color(piece: number): number { return getColor(piece); }
+  public static isColor(piece: number, colorIndex: number): boolean { return getColor(piece) === colorIndex; }
 }

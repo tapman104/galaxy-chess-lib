@@ -3,11 +3,13 @@ import { getLegalMoves, inCheck } from '../core/legality.js';
 import { makeMove, unmakeMove } from '../core/makeMove.js';
 import { FLAGS, moveFrom, moveTo, moveFlag, movePromo } from '../core/moveGen.js';
 import { InvalidMoveError } from './errors.js';
+import { GameState } from '../state/gameState.js';
+import { Move, Square, PieceType, MoveInput } from '../types.js';
 
 /**
  * Convert a packed move integer to a SAN string.
  */
-export function moveToSAN(board, state, move) {
+export function moveToSAN(board: Board, state: GameState, move: Move): string {
   const from = moveFrom(move);
   const to = moveTo(move);
   const flag = moveFlag(move);
@@ -23,7 +25,7 @@ export function moveToSAN(board, state, move) {
   let san = '';
 
   // 2. Piece Symbol
-  if (pType !== Pieces.PAWN) {
+  if (pType !== PieceType.PAWN) {
     san += getPieceChar(pType).toUpperCase();
     san += getDisambiguation(board, state, move);
   }
@@ -31,7 +33,7 @@ export function moveToSAN(board, state, move) {
   // 3. Captures
   const isCapture = flag === FLAGS.CAPTURE || flag === FLAGS.EP_CAPTURE || flag === FLAGS.PROMO_CAPTURE;
   if (isCapture) {
-    if (pType === Pieces.PAWN) {
+    if (pType === PieceType.PAWN) {
       san += board.indexToAlgebraic(from)[0]; // file
     }
     san += 'x';
@@ -51,7 +53,7 @@ export function moveToSAN(board, state, move) {
 /**
  * Parse a SAN string into a coordinate move object {from, to, promotion}.
  */
-export function sanToMove(board, state, san) {
+export function sanToMove(board: Board, state: GameState, san: string): MoveInput {
   const cleanSan = san.replace(/[+#?!( )]/g, '');
   
   // Handle Castling
@@ -74,7 +76,7 @@ export function sanToMove(board, state, san) {
 
   const [_, pChar, disambig, isCap, dest, promo] = match;
 
-  const targetPType = pChar ? charToType(pChar.toLowerCase()) : Pieces.PAWN;
+  const targetPType = pChar ? charToType(pChar.toLowerCase()) : PieceType.PAWN;
   const targetToIdx = board.algebraicToIndex(dest);
   const targetPromo = promo ? charToType(promo[1].toLowerCase()) : 0;
 
@@ -109,7 +111,7 @@ export function sanToMove(board, state, san) {
   throw new InvalidMoveError(`Invalid move: ${san}`);
 }
 
-function findMoveInLegal(board, state, predicate, originalSan) {
+function findMoveInLegal(board: Board, state: GameState, predicate: (m: Move) => boolean, originalSan: string): MoveInput {
   const legal = getLegalMoves(board, state);
   for (let i = 0; i < legal.count; i++) {
     const m = legal.moves[i];
@@ -124,14 +126,14 @@ function findMoveInLegal(board, state, predicate, originalSan) {
   throw new InvalidMoveError(`Invalid move: ${originalSan}`);
 }
 
-function getDisambiguation(board, state, move) {
+function getDisambiguation(board: Board, state: GameState, move: Move): string {
   const from = moveFrom(move);
   const to = moveTo(move);
   const piece = board.getByIndex(from);
   const pType = getType(piece);
 
   const legal = getLegalMoves(board, state);
-  const candidates = [];
+  const candidates: Square[] = [];
 
   for (let i = 0; i < legal.count; i++) {
     const m = legal.moves[i];
@@ -166,7 +168,7 @@ function getDisambiguation(board, state, move) {
   return (useFile ? f : '') + (useRank ? r : '');
 }
 
-function applyCheckMateSuffix(board, state, move, san) {
+function applyCheckMateSuffix(board: Board, state: GameState, move: Move, san: string): string {
   const undo = makeMove(board, state, move);
   const nextLegal = getLegalMoves(board, state);
   const isCheck = inCheck(board, state);
@@ -175,7 +177,7 @@ function applyCheckMateSuffix(board, state, move, san) {
   return san + suffix;
 }
 
-function getPieceChar(type) {
+function getPieceChar(type: number): string {
   if (type === Pieces.KNIGHT) return 'n';
   if (type === Pieces.BISHOP) return 'b';
   if (type === Pieces.ROOK) return 'r';
@@ -184,7 +186,7 @@ function getPieceChar(type) {
   return '';
 }
 
-function charToType(char) {
+function charToType(char: string): number {
   if (char === 'n') return Pieces.KNIGHT;
   if (char === 'b') return Pieces.BISHOP;
   if (char === 'r') return Pieces.ROOK;
@@ -192,4 +194,3 @@ function charToType(char) {
   if (char === 'k') return Pieces.KING;
   return Pieces.PAWN;
 }
-

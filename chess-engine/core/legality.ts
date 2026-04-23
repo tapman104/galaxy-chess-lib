@@ -1,12 +1,14 @@
-import { Board, Pieces, getType, getColor } from './board.js';
+import { Board, Pieces, getType } from './board.js';
 import { MoveList, generateMoves, isCastle, moveTo } from './moveGen.js';
 import { makeMove, unmakeMove } from './makeMove.js';
 import { isSquareAttacked, isKingInCheck } from './attackMap.js';
+import { GameState } from '../state/gameState.js';
+import { Square, PieceType, Move } from '../types.js';
 
 /**
  * Filter all pseudo-legal moves for the current side to move.
  */
-export function getLegalMoves(board, state) {
+export function getLegalMoves(board: Board, state: GameState): MoveList {
   const pseudoList = new MoveList();
   generateMoves(board, state, pseudoList);
 
@@ -24,19 +26,20 @@ export function getLegalMoves(board, state) {
  * Validates if a pseudo-legal move is fully legal (doesn't leave king in check).
  * Also handles specific castling legality (cannot castle through check).
  */
-export function isMoveLegal(board, state, move) {
+export function isMoveLegal(board: Board, state: GameState, move: Move): boolean {
   const color = state.turn;
 
   // 0. In standard 2-player chess capturing the king is treated as illegal
   // (mate detection occurs instead). For multi-player variants we allow
   // king captures so players can be eliminated by direct capture.
   const targetPiece = board.getByIndex(moveTo(move));
-  if (targetPiece !== Pieces.EMPTY && getType(targetPiece) === Pieces.KING && board.variant.numPlayers === 2) {
+  if (targetPiece !== PieceType.EMPTY && getType(targetPiece) === PieceType.KING && board.variant.numPlayers === 2) {
     return false;
   }
 
   // 1. CASTLING SPECIAL CHECK
-  if (isCastle(move)) {    const kingIdx = findKing(board, color);
+  if (isCastle(move)) {
+    const kingIdx = findKing(board, color);
     if (kingIdx === -1) return false;
 
     // Cannot castle if currently in check from ANY enemy
@@ -73,10 +76,10 @@ export function isMoveLegal(board, state, move) {
 /**
  * Helper: Find the king's square for a given color.
  */
-export function findKing(board, colorIndex) {
-  for (const idx of board.getPieces(colorIndex)) {
+export function findKing(board: Board, colorIndex: number): Square | -1 {
+  for (const idx of Array.from(board.getPieces(colorIndex))) {
     const p = board.getByIndex(idx);
-    if (getType(p) === Pieces.KING) return idx;
+    if (getType(p) === PieceType.KING) return idx;
   }
   return -1;
 }
@@ -85,7 +88,6 @@ export function findKing(board, colorIndex) {
  * Helper: Check if a specific side is in check.
  * Defaults to current side to move if colorIndex is omitted.
  */
-export function inCheck(board, state, colorIndex = state.turn) {
+export function inCheck(board: Board, state: GameState, colorIndex: number = state.turn): boolean {
   return isKingInCheck(board, colorIndex);
 }
-
