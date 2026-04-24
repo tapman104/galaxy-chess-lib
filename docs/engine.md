@@ -6,58 +6,76 @@ Vortex provides an asynchronous engine adapter framework for analyzing positions
 
 The core `Chess` class remains purely synchronous and rules-focused. Engine logic is handled by external `EngineAdapter` implementations that communicate with engine backends (like Stockfish via Web Workers).
 
-## Basic Usage (Stockfish)
+## Installation
 
-To use Stockfish, you need a Stockfish WASM worker script.
+The `vortex-chess` library does not bundle the Stockfish engine. You must provide your own Stockfish WASM worker script. 
+
+Common sources:
+- `stockfish.js` npm package
+- [Stockfish.js GitHub](https://github.com/nmrugg/stockfish.js/)
+
+## Usage Example
 
 ```javascript
-import { Chess, StockfishAdapter } from 'vortex-chess';
+import { Chess, StockfishAdapter, UnsupportedVariantError } from 'vortex-chess';
 
+// 1. Initialize game and adapter
 const game = new Chess();
 const engine = new StockfishAdapter({
-  workerPath: './stockfish-nnue-16.js'
+  workerPath: './stockfish-nnue-16.js',
+  timeout: 15000 // Optional: defaults to 10000ms
 });
 
-// 1. Connect to the engine
-await engine.connect();
-
-// 2. Request the best move
-const result = await engine.getBestMove(game, { depth: 15 });
-
-console.log(`Best move: ${result.bestMove}`);
-console.log(`Evaluation: ${result.evaluation / 100} pawns`);
-
-// 3. Disconnect when done
-await engine.disconnect();
-```
-
-## Error Handling
-
-### Unsupported Variants
-Stockfish only supports standard chess. If you try to use it with a 4-player variant, it will throw an `UnsupportedVariantError`.
-
-```javascript
-import { UnsupportedVariantError } from 'vortex-chess';
-
 try {
-  await engine.getBestMove(fourPlayerGame);
-} catch (e) {
-  if (e instanceof UnsupportedVariantError) {
-    console.error("This engine doesn't support 4-player chess!");
+  // 2. Connect (Handshake: uci -> uciok -> isready -> readyok)
+  await engine.connect();
+
+  // 3. Get Best Move
+  // The adapter snapshots the FEN synchronously before starting the search
+  const result = await engine.getBestMove(game, { depth: 15 });
+
+  console.log(`Best Move: ${result.bestMove}`);
+  if (result.evaluation !== undefined) {
+    console.log(`Evaluation: ${(result.evaluation / 100).toFixed(2)} pawns`);
+  } else if (result.mate !== undefined) {
+    console.log(`Mate in ${result.mate}`);
   }
+
+} catch (err) {
+  if (err instanceof UnsupportedVariantError) {
+    console.error("This engine only supports standard chess.");
+  } else {
+    console.error("Engine error:", err.message);
+  }
+} finally {
+  // 4. Cleanup
+  await engine.disconnect();
 }
 ```
 
-## Advanced Options
+## Behavior & Constraints
 
-`getBestMove` accepts several search constraints:
+### 4-Player Variants
+Stockfish (and most UCI engines) only supports standard 2-player chess. If you attempt to call `getBestMove` on a game instance using a non-standard variant (e.g., `4player@v1`), the adapter will immediately throw an `UnsupportedVariantError`.
 
-- `depth`: Maximum search depth in half-moves.
-- `movetime`: Maximum time to search in milliseconds.
-- `nodes`: Maximum number of nodes to search.
+### Lifecycle Management
+- **One Adapter, Multiple Positions**: You can reuse a single `StockfishAdapter` instance for multiple `getBestMove` calls as you progress through a game.
+- **Sequential Requests**: The adapter only supports one search at a time. If you call `getBestMove` while a search is already pending, it will throw an error.
+- **Disconnection**: Always call `disconnect()` when you are finished with the engine to terminate the underlying Web Worker and prevent memory leaks.
 
-## Best Practices
+### Error Handling
+- **Timeouts**: If the engine fails to respond to a handshake or a search request within the configured `timeout`, the promise will reject.
+- **Post-Disconnect Guards**: Any calls to `connect()` or `getBestMove()` after calling `disconnect()` will result in an error.
 
-1. **Lifecycle Management**: Always call `engine.disconnect()` when the engine is no longer needed to terminate the Web Worker and free memory.
-2. **FEN Snapshots**: The adapter automatically takes a FEN snapshot of the game state when `getBestMove` is called. This ensures that even if the `Chess` instance is mutated during the asynchronous search, the engine analyzes the position as it was at the moment of the call.
-3. **One Request at a Time**: `StockfishAdapter` enforces a single-request policy. If you call `getBestMove` while a search is already in progress, it will throw an error.
+## API Reference
+
+### `BestMoveOptions`
+- `depth?: number`: Search depth in half-moves (defaults to 15 if neither depth nor movetime is provided).
+- `movetime?: number`: Search time in milliseconds.
+
+### `BestMoveResult`
+- `bestMove: string`: SAN move (or `(none)` if no move found).
+- `ponder?: string`: Expected continuation SAN move.
+- `evaluation?: number`: Score in centipawns.
+- `mate?: number`: Mate in N moves.
+- `depth?: number`: Actual depth reached.

@@ -8,20 +8,20 @@ export interface BestMoveOptions {
   depth?: number;
   /** Search time in milliseconds. */
   movetime?: number;
-  /** Number of nodes to search. */
-  nodes?: number;
 }
 
 /**
  * Result of an engine search.
  */
-export interface AnalysisResult {
+export interface BestMoveResult {
   /** The best move found, in SAN format. */
   bestMove: string;
-  /** The predicted continuation move (ponder). */
+  /** The predicted continuation move (ponder) in SAN format. */
   ponder?: string;
-  /** Evaluation in centipawns (positive for white/red, negative for black). */
+  /** Evaluation in centipawns. */
   evaluation?: number;
+  /** Evaluation as mate in N moves. */
+  mate?: number;
   /** Depth reached during search. */
   depth?: number;
 }
@@ -37,13 +37,13 @@ export class UnsupportedVariantError extends Error {
 }
 
 /**
- * Base interface for chess engine adapters (e.g., Stockfish).
+ * Base interface for chess engine adapters.
  */
 export interface EngineAdapter {
-  /** Initialize the engine (e.g., start Worker, send 'uci'). */
+  /** Initialize the engine and perform handshake. */
   connect(): Promise<void>;
+  /** Request the best move for the current position of the given game. */
+  getBestMove(game: Chess, options?: BestMoveOptions): Promise<BestMoveResult>;
   /** Shut down the engine and release resources. */
   disconnect(): Promise<void>;
-  /** Request the best move for the current position of the given game. */
-  getBestMove(game: Chess, options?: BestMoveOptions): Promise<AnalysisResult>;
 }

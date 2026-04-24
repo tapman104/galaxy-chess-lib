@@ -2,15 +2,15 @@ import { Chess } from '../api/chess.js';
 import { 
   EngineAdapter, 
   BestMoveOptions, 
-  AnalysisResult, 
+  BestMoveResult, 
   UnsupportedVariantError 
 } from './EngineAdapter.js';
 
 export interface StockfishConfig {
   /** Path to the Stockfish Worker script. */
-  workerPath?: string;
-  /** Existing Worker instance to use. */
-  worker?: Worker;
+  workerPath: string;
+  /** Timeout in milliseconds for engine responses (default: 10000ms). */
+  timeout?: number;
 }
 
 /**
@@ -20,96 +20,74 @@ export class StockfishAdapter implements EngineAdapter {
   private _worker: Worker | null = null;
   private _config: StockfishConfig;
   private _isReady = false;
+  private _disconnected = false;
+  private _activeHandler: ((e: MessageEvent) => void) | null = null;
   private _pendingPromise: { 
-    resolve: (val: AnalysisResult) => void; 
+    resolve: (val: BestMoveResult) => void; 
     reject: (err: any) => void;
+    timer: any;
   } | null = null;
 
-  constructor(config: StockfishConfig = {}) {
-    this._config = config;
+  constructor(config: StockfishConfig) {
+    this._config = {
+      timeout: 10000,
+      ...config
+    };
   }
 
   /**
-   * Initializes the Stockfish worker and sends the 'uci' command.
-   * Resolves when 'uciok' is received.
+   * Initializes the Stockfish worker and performs the UCI handshake.
+   * Sequence: uci -> uciok -> isready -> readyok.
    */
   async connect(): Promise<void> {
-    if (this._worker) return;
+    if (this._disconnected) throw new Error('StockfishAdapter is disconnected');
+    if (this._worker) return; // Idempotent: do nothing if already connected
 
-    if (this._config.worker) {
-      this._worker = this._config.worker;
-    } else if (this._config.workerPath) {
+    try {
       this._worker = new Worker(this._config.workerPath);
-    } else {
-      throw new Error('StockfishAdapter: No worker or workerPath provided.');
+    } catch (err) {
+      throw new Error(`Failed to initialize Stockfish worker: ${err}`);
     }
 
-    return new Promise((resolve, reject) => {
-      const initHandler = (e: MessageEvent) => {
-        const msg = e.data;
-        if (typeof msg !== 'string') return;
-        
-        if (msg === 'uciok') {
-          this._isReady = true;
-          this._worker?.removeEventListener('message', initHandler);
-          resolve();
-        }
-      };
-
-      const timeout = setTimeout(() => {
-        this._worker?.removeEventListener('message', initHandler);
-        reject(new Error('Stockfish initialization timed out (5s)'));
-      }, 5000);
-
-      this._worker!.addEventListener('message', initHandler);
-      this._worker!.postMessage('uci');
-    });
+    // 1. Handshake: uci -> uciok
+    await this._sendCommandAndExpect('uci', 'uciok');
+    
+    // 2. Handshake: isready -> readyok
+    await this._sendCommandAndExpect('isready', 'readyok');
+    
+    this._isReady = true;
   }
 
   /**
-   * Terminates the worker and resets state.
+   * Request the best move for the current position.
    */
-  async disconnect(): Promise<void> {
-    this._worker?.terminate();
-    this._worker = null;
-    this._isReady = false;
-    if (this._pendingPromise) {
-      this._pendingPromise.reject(new Error('Engine disconnected during search.'));
-      this._pendingPromise = null;
-    }
-  }
+  async getBestMove(game: Chess, options: BestMoveOptions = {}): Promise<BestMoveResult> {
+    this._ensureActive();
 
-  /**
-   * Search for the best move in the current game position.
-   */
-  async getBestMove(game: Chess, options: BestMoveOptions = {}): Promise<AnalysisResult> {
     if (game.variant() !== 'standard@v1') {
       throw new UnsupportedVariantError(game.variant());
     }
 
-    if (!this._worker || !this._isReady) {
-      throw new Error('Stockfish not connected. Call connect() first.');
-    }
-
     if (this._pendingPromise) {
-      throw new Error('Another search is already in progress.');
+      throw new Error('A search is already in progress.');
     }
 
+    // Snapshot FEN synchronously before any await
     const fen = game.fen();
-    this._worker.postMessage(`position fen ${fen}`);
-
-    let goCmd = 'go';
-    if (options.depth) goCmd += ` depth ${options.depth}`;
-    if (options.movetime) goCmd += ` movetime ${options.movetime}`;
-    if (options.nodes) goCmd += ` nodes ${options.nodes}`;
-    if (goCmd === 'go') goCmd += ' depth 15'; // default depth
 
     return new Promise((resolve, reject) => {
-      this._pendingPromise = { resolve, reject };
       let lastDepth = 0;
-      let lastEval = 0;
+      let lastEval: number | undefined;
+      let lastMate: number | undefined;
 
-      const handler = (e: MessageEvent) => {
+      const timer = setTimeout(() => {
+        this._cleanupPending();
+        reject(new Error(`Stockfish bestmove timeout after ${this._config.timeout}ms`));
+      }, this._config.timeout);
+
+      this._pendingPromise = { resolve, reject, timer };
+
+      this._activeHandler = (e: MessageEvent) => {
         const msg = e.data;
         if (typeof msg !== 'string') return;
 
@@ -120,10 +98,13 @@ export class StockfishAdapter implements EngineAdapter {
           const mateMatch = msg.match(/score mate (-?\d+)/);
           
           if (depthMatch) lastDepth = parseInt(depthMatch[1]);
-          if (cpMatch) lastEval = parseInt(cpMatch[1]);
+          if (cpMatch) {
+            lastEval = parseInt(cpMatch[1]);
+            lastMate = undefined;
+          }
           if (mateMatch) {
-            const mateIn = parseInt(mateMatch[1]);
-            lastEval = mateIn > 0 ? 100000 - mateIn : -100000 - mateIn;
+            lastMate = parseInt(mateMatch[1]);
+            lastEval = undefined;
           }
           return;
         }
@@ -134,24 +115,35 @@ export class StockfishAdapter implements EngineAdapter {
           const bestmoveUci = parts[1];
           const ponderUci = parts[3];
 
-          this._pendingPromise = null;
-          this._worker?.removeEventListener('message', handler);
+          // Cleanup must happen before resolution to remove the listener
+          this._cleanupPending();
+
+          if (!bestmoveUci || bestmoveUci === '(none)') {
+            resolve({ 
+              bestMove: '(none)', 
+              depth: lastDepth, 
+              evaluation: lastEval, 
+              mate: lastMate 
+            });
+            return;
+          }
 
           try {
-            const result: AnalysisResult = {
+            const result: BestMoveResult = {
               bestMove: this._uciToSan(game, bestmoveUci),
               depth: lastDepth,
               evaluation: lastEval,
+              mate: lastMate,
             };
 
             if (ponderUci && ponderUci !== '(none)') {
-              // To get Ponder SAN, we need to apply the best move first
+              // To get Ponder SAN, apply bestMove to a clone
               const clone = game.clone();
               try {
                 clone.move(result.bestMove);
                 result.ponder = this._uciToSan(clone, ponderUci);
               } catch {
-                result.ponder = ponderUci; // Fallback to UCI
+                result.ponder = ponderUci;
               }
             }
 
@@ -162,13 +154,76 @@ export class StockfishAdapter implements EngineAdapter {
         }
       };
 
-      this._worker!.addEventListener('message', handler);
+      this._worker!.addEventListener('message', this._activeHandler);
+      this._worker!.postMessage(`position fen ${fen}`);
+
+      let goCmd = 'go';
+      if (options.depth) goCmd += ` depth ${options.depth}`;
+      else if (options.movetime) goCmd += ` movetime ${options.movetime}`;
+      else goCmd += ' depth 15'; // default
+
       this._worker!.postMessage(goCmd);
     });
   }
 
   /**
-   * Converts a UCI move string (e.g. "e2e4") to SAN using a game instance.
+   * Send 'quit' and terminate worker.
+   */
+  async disconnect(): Promise<void> {
+    if (this._disconnected) return;
+    
+    if (this._worker) {
+      this._worker.postMessage('quit');
+      this._worker.terminate();
+      this._worker = null;
+    }
+    
+    this._cleanupPending();
+    this._isReady = false;
+    this._disconnected = true;
+  }
+
+  private _ensureActive() {
+    if (this._disconnected) throw new Error('StockfishAdapter is disconnected');
+    if (!this._worker || !this._isReady) throw new Error('Stockfish not connected. Call connect() first.');
+  }
+
+  private _cleanupPending() {
+    if (this._pendingPromise) {
+      clearTimeout(this._pendingPromise.timer);
+      this._pendingPromise = null;
+    }
+    if (this._activeHandler) {
+      this._worker?.removeEventListener('message', this._activeHandler);
+      this._activeHandler = null;
+    }
+  }
+
+  private async _sendCommandAndExpect(command: string, expected: string): Promise<void> {
+    if (!this._worker) throw new Error('Worker not initialized');
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._worker?.removeEventListener('message', handler);
+        reject(new Error(`Stockfish timeout waiting for ${expected} after ${this._config.timeout}ms`));
+      }, this._config.timeout);
+
+      const handler = (e: MessageEvent) => {
+        if (typeof e.data === 'string' && e.data.startsWith(expected)) {
+          clearTimeout(timer);
+          this._worker?.removeEventListener('message', handler);
+          resolve();
+        }
+      };
+
+      this._worker.addEventListener('message', handler);
+      this._worker.postMessage(command);
+    });
+  }
+
+  /**
+   * Converts UCI (e.g. "e2e4") to SAN using a game clone.
+   * This ensures we use the project's SAN conversion logic without mutating the original game.
    */
   private _uciToSan(game: Chess, uci: string): string {
     if (!uci || uci === '(none)') return '';
@@ -177,17 +232,12 @@ export class StockfishAdapter implements EngineAdapter {
     const to = uci.slice(2, 4);
     const promo = uci.length > 4 ? uci[4] : undefined;
 
-    // We look for a match in the legal moves list
-    const moves = game.moves({ verbose: true }) as any[];
-    const match = moves.find(m => 
-      m.from === from && 
-      m.to === to && 
-      (!promo || m.promotion === (promo === 'q' ? 'q' : promo)) // UCI promo is usually lowercase
-    );
-    
-    if (match) return match.san;
-    
-    // If no match found (e.g. invalid move returned by engine?), return original UCI
-    return uci;
+    const clone = game.clone();
+    try {
+      const moveObj = clone.move({ from, to, promotion: promo });
+      return moveObj.san;
+    } catch {
+      return uci; // Fallback
+    }
   }
 }
